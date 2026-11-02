@@ -8,13 +8,13 @@ import re
 import sqlite3
 import time
 import traceback
-from contextlib import closing
 from datetime import datetime, timedelta
 
 import discord
 import requests
 from requests.adapters import HTTPAdapter
 
+from . import db
 from .alliance_member_edit import new_member_name
 from .pimp_my_bot import count_text, plural, theme
 from .browser_headers import get_headers
@@ -726,11 +726,11 @@ async def await_rate_limit(cog) -> None:
 async def get_user_kid(cog, fid):
     """The player's stored kingdom (kid); falls back to the configured test FID's kingdom."""
     def _query():
-        with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+        with db.connect(db.USERS) as conn:
             row = conn.execute("SELECT kid FROM users WHERE fid = ?", (fid,)).fetchone()
         if row and row[0] is not None:
             return row[0]
-        with sqlite3.connect('db/settings.sqlite', timeout=30.0) as sconn:
+        with db.connect(db.SETTINGS) as sconn:
             trow = sconn.execute(
                 "SELECT kid FROM test_fid_settings WHERE test_fid = ? ORDER BY id DESC LIMIT 1",
                 (str(fid),)).fetchone()
@@ -756,7 +756,7 @@ async def get_alt_validation_fids(cog, exclude, limit=3):
     """Random alliance-member FIDs to validate with when the primary FID is dead.
     Only members with a known kingdom (kid) — redemption needs it now."""
     def _query():
-        with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+        with db.connect(db.USERS) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT fid FROM users WHERE alliance IS NOT NULL AND alliance != '' "
@@ -1388,7 +1388,7 @@ class _StateScanProgress:
 
     def _member_info(self, fid):
         try:
-            with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+            with db.connect(db.USERS) as conn:
                 row = conn.execute(
                     "SELECT alliance, nickname FROM users WHERE fid = ?", (fid,)).fetchone()
             return (row[0], row[1] or str(fid)) if row else (None, str(fid))
@@ -1397,7 +1397,7 @@ class _StateScanProgress:
 
     def _channel_id(self, alliance_id):
         try:
-            with sqlite3.connect('db/settings.sqlite', timeout=30.0) as conn:
+            with db.connect(db.SETTINGS) as conn:
                 row = conn.execute(
                     "SELECT channel_id FROM alliance_logs WHERE alliance_id = ?",
                     (alliance_id,)).fetchone()
@@ -1694,7 +1694,7 @@ def auto_remove_on(alliance_id):
     """True when the single-kingdom alliance removes members who transfer out of its kingdom."""
     if gift_state_resolver.is_multistate(alliance_id):
         return False
-    with closing(sqlite3.connect('db/alliance.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.ALLIANCE) as conn:
         row = conn.execute("SELECT auto_remove_on_transfer FROM alliancesettings WHERE alliance_id = ?",
                            (alliance_id,)).fetchone()
     return bool(row and row[0])
@@ -1705,7 +1705,7 @@ async def maybe_remove_transferred_member(cog, fid, collector=None):
     (auto_remove_on_transfer). Nothing is deleted here; apply_removals decides. Pass
     `collector` during a bulk run to batch the notices."""
     def _candidate():
-        with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn:
+        with db.connect(db.USERS) as conn:
             row = conn.execute(
                 "SELECT alliance, nickname FROM users WHERE fid = ?", (fid,)).fetchone()
         alliance_id = row[0] if row and row[0] is not None else None
@@ -1827,12 +1827,12 @@ async def apply_removals(cog, candidates):
         by_alliance.setdefault(alliance_id, []).append((fid, nickname))
 
     def _roster_size(alliance_id):
-        with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+        with db.connect(db.USERS) as conn:
             return conn.execute(
                 "SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,)).fetchone()[0]
 
     def _delete(fids):
-        with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+        with db.connect(db.USERS) as conn:
             conn.executemany("DELETE FROM users WHERE fid = ?", [(f,) for f in fids])
             conn.commit()
 
@@ -1864,7 +1864,7 @@ async def apply_removals(cog, candidates):
 def _alliance_log_channel(cog, alliance_id):
     """The alliance's log channel object, or None when unset or unreachable."""
     try:
-        with sqlite3.connect('db/settings.sqlite', timeout=30.0) as conn:
+        with db.connect(db.SETTINGS) as conn:
             row = conn.execute(
                 "SELECT channel_id FROM alliance_logs WHERE alliance_id = ?", (alliance_id,)
             ).fetchone()
@@ -2621,7 +2621,7 @@ async def use_giftcode_for_alliance(cog, alliance_id, giftcode, process=None):
             return False
 
         # Get Members
-        with sqlite3.connect('db/users.sqlite') as users_conn:
+        with db.connect(db.USERS) as users_conn:
             users_cursor = users_conn.cursor()
             users_cursor.execute("SELECT fid, nickname FROM users WHERE alliance = ?", (str(alliance_id),))
             members = named_members(users_cursor.fetchall())

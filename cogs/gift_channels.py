@@ -1,9 +1,9 @@
 """Gift code channel management — setup, configuration, deletion, and history scanning."""
 
 import discord
-import sqlite3
 import logging
 
+from . import db
 from .pimp_my_bot import theme, menu_timeout, confirm_timeout
 from .alliance_member_operations import AllianceSelectView
 from .alliance import PaginatedChannelView
@@ -34,7 +34,7 @@ async def setup_gift_channel(cog, interaction: discord.Interaction):
 
     alliances_with_counts = []
     for alliance_id, name in available_alliances:
-        with sqlite3.connect('db/users.sqlite') as users_db:
+        with db.connect(db.USERS) as users_db:
             cursor = users_db.cursor()
             cursor.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,))
             member_count = cursor.fetchone()[0]
@@ -170,7 +170,7 @@ async def delete_gift_channel(cog, interaction: discord.Interaction):
     alliances_with_counts = []
     for alliance_id, name in available_alliances:
         if alliance_id in current_channels:
-            with sqlite3.connect('db/users.sqlite') as users_db:
+            with db.connect(db.USERS) as users_db:
                 cursor = users_db.cursor()
                 cursor.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,))
                 member_count = cursor.fetchone()[0]
