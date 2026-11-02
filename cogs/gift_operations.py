@@ -403,14 +403,20 @@ class GiftOperations(commands.Cog):
         then catch up on the codes they missed while kingdom-less. Returns (assigned, caught_up).
         Runs on a worker thread, so it reads gift codes through its own connection."""
         fids = gift_state_resolver.assign_alliance_kid_to_missing()
+        if not fids:
+            return 0, 0
         caught = 0
-        with db.connect(db.GIFTCODE) as giftcode_conn:
-            for fid in fids:
-                try:
-                    if gift_redemption.enqueue_member_redemption(self, fid, conn=giftcode_conn):
-                        caught += 1
-                except Exception as e:
-                    self.logger.warning(f"GiftOps: could not queue catch-up for FID {fid}: {e}")
+        try:
+            with db.connect(db.GIFTCODE) as giftcode_conn:
+                for fid in fids:
+                    try:
+                        if gift_redemption.enqueue_member_redemption(self, fid, conn=giftcode_conn):
+                            caught += 1
+                    except Exception as e:
+                        self.logger.warning(f"GiftOps: could not queue catch-up for FID {fid}: {e}")
+        except Exception as e:
+            # The kingdom assignment already committed; only the catch-up is lost.
+            self.logger.warning(f"GiftOps: could not open the gift code database for catch-up: {e}")
         return len(fids), caught
 
     def queue_kingdom_scan(self, mode):

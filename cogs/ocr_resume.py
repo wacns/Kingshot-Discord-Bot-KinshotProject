@@ -21,7 +21,6 @@ def _conn():
 def _init():
     try:
         with _conn() as c:
-            c.execute("PRAGMA journal_mode=WAL")
             c.execute("CREATE TABLE IF NOT EXISTS ocr_snapshots (key TEXT PRIMARY KEY, kind TEXT, payload TEXT, updated_at TEXT)")
     except Exception:
         pass

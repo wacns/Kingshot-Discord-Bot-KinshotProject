@@ -8,6 +8,7 @@ raises RuntimeError here.
 import asyncio
 import logging
 import os
+import sqlite3
 import threading
 import types
 
@@ -170,3 +171,37 @@ def test_bear_player_autocomplete_off_the_loop(dbs):
         cog.alliance_conn.close()
         cog.users_conn.close()
     assert [(c.name, c.value) for c in choices] == [("Alpha (111)", "111")]
+
+
+def _catch_up_cog(warnings):
+    logger = types.SimpleNamespace(warning=warnings.append)
+    return types.SimpleNamespace(bot=None, logger=logger)
+
+
+def test_catch_up_with_no_members_does_not_open_the_giftcode_db(dbs, monkeypatch):
+    warnings = []
+    monkeypatch.setattr(gift_state_resolver, "assign_alliance_kid_to_missing", lambda: [])
+
+    def boom(*a, **kw):
+        raise AssertionError("must not open a connection")
+
+    monkeypatch.setattr(db, "connect", boom)
+    result = gift_operations.GiftOperations.assign_alliance_state_to_missing(
+        _catch_up_cog(warnings))
+    assert result == (0, 0)
+    assert warnings == []
+
+
+def test_catch_up_open_failure_is_logged_once_and_keeps_the_assigned_count(dbs, monkeypatch):
+    warnings = []
+    monkeypatch.setattr(gift_state_resolver, "assign_alliance_kid_to_missing", lambda: [111, 222])
+
+    def cannot_open(*a, **kw):
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(db, "connect", cannot_open)
+    result = gift_operations.GiftOperations.assign_alliance_state_to_missing(
+        _catch_up_cog(warnings))
+    assert result == (2, 0)
+    assert len(warnings) == 1
+    assert "unable to open database file" in warnings[0]

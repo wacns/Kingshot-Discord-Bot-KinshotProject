@@ -185,3 +185,23 @@ def test_persistent_closes_connection_when_pragmas_fail(monkeypatch):
     assert len(opened) == 1
     with pytest.raises(sqlite3.ProgrammingError):
         opened[0].execute("SELECT 1")
+
+
+def test_connect_rollback_failure_does_not_mask_original_error(monkeypatch):
+    closed = []
+
+    class BrokenConn(sqlite3.Connection):
+        def rollback(self):
+            raise sqlite3.OperationalError("rollback failed")
+
+        def close(self):
+            closed.append(True)
+            super().close()
+
+    real_connect = sqlite3.connect
+    monkeypatch.setattr(
+        sqlite3, "connect", lambda *a, **kw: real_connect(*a, factory=BrokenConn, **kw))
+    with pytest.raises(ValueError, match="original"):
+        with db.connect(db.USERS):
+            raise ValueError("original")
+    assert closed == [True]

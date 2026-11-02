@@ -82,12 +82,13 @@ def compare(current: dict, baseline: dict) -> bool:
         b = baseline["files"][f]
         c = current[f]
         limit = max(REL_TOL * b["min"], ABS_TOL)
-        delta = c["min"] - b["min"]
         reasons = []
         if c["min"] is None:
             reasons.append("no pytest session time parsed")
             delta = float("nan")
-        elif delta > limit:
+        else:
+            delta = c["min"] - b["min"]
+        if c["min"] is not None and delta > limit:
             reasons.append(f"slower by {delta:.3f}s > {limit:.3f}s")
         if c["passed"] != b["passed"]:
             reasons.append(f"passed {b['passed']} -> {c['passed']}")

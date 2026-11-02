@@ -112,14 +112,20 @@ def connect(path: str, *, timeout: float = DEFAULT_TIMEOUT) -> Iterator[sqlite3.
         yield conn
         conn.commit()
     except BaseException:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass  # a broken connection must not mask the original error
         raise
     finally:
         conn.close()
 
 
 async def run(path: str, fn: Callable[..., T], *args) -> T:
-    """Run fn(conn, *args) on a worker thread inside connect(path)."""
+    """Run fn(conn, *args) on a worker thread inside connect(path).
+
+    Cancelling the awaiting coroutine does not stop the worker thread: the work still
+    runs to completion and commits."""
     def work() -> T:
         with connect(path) as conn:
             return fn(conn, *args)

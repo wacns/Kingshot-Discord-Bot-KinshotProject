@@ -164,8 +164,6 @@ def _ensure_bear_hunts_event_time(conn):
 def init_bear_database():
     """Initialize bear_hunts + bear_player_damage tables."""
     with db.connect(BEAR_DB_PATH) as conn:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS bear_hunts (
