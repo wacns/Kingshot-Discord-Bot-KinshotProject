@@ -1,4 +1,9 @@
-"""Fixtures for the SimCord UI suite. Run with: pytest tests/sim --sim"""
+"""Fixtures for the SimCord UI suite. Run with: pytest tests/sim --sim
+
+Set KSBOT_SIM_SEED_DB=<folder> to copy an existing db/ folder (say, one an older release made)
+into each test's folder first. It must not already hold the rows the populated scenario seeds
+(alliance 1, members 10001-10003, the admins), and some tests count alliances and members, so
+extra rows belong to an alliance id no alliance row has."""
 import logging
 import os
 import shutil
