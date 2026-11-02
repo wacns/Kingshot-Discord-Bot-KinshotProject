@@ -7,6 +7,7 @@ import sqlite3
 import logging
 from datetime import datetime
 import json
+from . import db
 from .pimp_my_bot import theme, safe_edit_message, menu_timeout, confirm_timeout, check_interaction_user
 
 logger = logging.getLogger('bot')
@@ -825,40 +826,38 @@ class MinisterArchive(commands.Cog):
     async def update_appointments_embed(self, interaction: discord.Interaction, view: ArchiveAppointmentsView):
         """Update the appointments embed with paginated records"""
         # Get alliance database connection
-        alliance_conn = sqlite3.connect('db/alliance.sqlite')
-        alliance_cursor = alliance_conn.cursor()
-        try:
-            # Calculate page boundaries
-            start_idx = view.page * 25
-            end_idx = min(start_idx + 25, len(view.appointments))
-            page_appointments = view.appointments[start_idx:end_idx]
+        with db.connect(db.ALLIANCE) as alliance_conn:
+            alliance_cursor = alliance_conn.cursor()
+            try:
+                # Calculate page boundaries
+                start_idx = view.page * 25
+                end_idx = min(start_idx + 25, len(view.appointments))
+                page_appointments = view.appointments[start_idx:end_idx]
 
-            # Build appointment lines
-            appointment_lines = []
-            for time, fid, nickname, alliance_id in page_appointments:
-                # Get alliance name
-                alliance_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id=?", (alliance_id,))
-                alliance_result = alliance_cursor.fetchone()
-                alliance_name = alliance_result[0] if alliance_result else "Unknown"
+                # Build appointment lines
+                appointment_lines = []
+                for time, fid, nickname, alliance_id in page_appointments:
+                    # Get alliance name
+                    alliance_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id=?", (alliance_id,))
+                    alliance_result = alliance_cursor.fetchone()
+                    alliance_name = alliance_result[0] if alliance_result else "Unknown"
 
-                # Format line like current schedule display
-                appointment_lines.append(f"`{time}` - [{alliance_name}] {nickname} - {fid}")
+                    # Format line like current schedule display
+                    appointment_lines.append(f"`{time}` - [{alliance_name}] {nickname} - {fid}")
 
-            description = "\n".join(appointment_lines) if appointment_lines else "No appointments to display."
+                description = "\n".join(appointment_lines) if appointment_lines else "No appointments to display."
 
-            embed = discord.Embed(
-                title=f"{theme.listIcon} {view.appointment_type} - Archive Appointments",
-                description=description,
-                color=theme.emColor1
-            )
-            embed.set_footer(text=f"Page {view.page + 1}/{view.max_page + 1} • Total: {len(view.appointments)} appointments")
-            await safe_edit_message(interaction, embed=embed, view=view)
+                embed = discord.Embed(
+                    title=f"{theme.listIcon} {view.appointment_type} - Archive Appointments",
+                    description=description,
+                    color=theme.emColor1
+                )
+                embed.set_footer(text=f"Page {view.page + 1}/{view.max_page + 1} • Total: {len(view.appointments)} appointments")
+                await safe_edit_message(interaction, embed=embed, view=view)
 
-        except Exception as e:
-            logger.error(f"Error updating appointments embed: {e}")
-            print(f"Error updating appointments embed: {e}")
-        finally:
-            alliance_conn.close()
+            except Exception as e:
+                logger.error(f"Error updating appointments embed: {e}")
+                print(f"Error updating appointments embed: {e}")
 
     async def show_channel_selector_for_post(self, interaction: discord.Interaction, archive_id: int, appointment_type: str, appointments):
         """Show channel selector for posting archive appointments"""
@@ -879,103 +878,101 @@ class MinisterArchive(commands.Cog):
         """Post archive appointments to selected channel"""
         await interaction.response.defer()
 
-        alliance_conn = sqlite3.connect('db/alliance.sqlite')
-        try:
-            alliance_cursor = alliance_conn.cursor()
+        with db.connect(db.ALLIANCE) as alliance_conn:
+            try:
+                alliance_cursor = alliance_conn.cursor()
 
-            # Get archive info
-            self.svs_cursor.execute("""
+                # Get archive info
+                self.svs_cursor.execute("""
                 SELECT archive_name, created_at
                 FROM minister_archives
                 WHERE archive_id = ?
             """, (archive_id,))
-            archive_info = self.svs_cursor.fetchone()
+                archive_info = self.svs_cursor.fetchone()
 
-            if not archive_info:
-                await interaction.followup.send(f"{theme.deniedIcon} Archive not found.", ephemeral=True)
-                return
+                if not archive_info:
+                    await interaction.followup.send(f"{theme.deniedIcon} Archive not found.", ephemeral=True)
+                    return
 
-            archive_name, created_at = archive_info
-            created_date = datetime.fromisoformat(created_at).strftime("%Y-%m-%d")
+                archive_name, created_at = archive_info
+                created_date = datetime.fromisoformat(created_at).strftime("%Y-%m-%d")
 
-            # Build appointment list
-            appointment_lines = []
-            for time, fid, nickname, alliance_id in appointments:
-                # Get alliance name
-                alliance_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id=?", (alliance_id,))
-                alliance_result = alliance_cursor.fetchone()
-                alliance_name = alliance_result[0] if alliance_result else "Unknown"
+                # Build appointment list
+                appointment_lines = []
+                for time, fid, nickname, alliance_id in appointments:
+                    # Get alliance name
+                    alliance_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id=?", (alliance_id,))
+                    alliance_result = alliance_cursor.fetchone()
+                    alliance_name = alliance_result[0] if alliance_result else "Unknown"
 
-                # Format line like current schedule display
-                appointment_lines.append(f"`{time}` - [{alliance_name}] {nickname} - {fid}")
+                    # Format line like current schedule display
+                    appointment_lines.append(f"`{time}` - [{alliance_name}] {nickname} - {fid}")
 
-            # Split into chunks if too long (Discord embed description limit is 4096 characters)
-            description_text = "\n".join(appointment_lines)
+                # Split into chunks if too long (Discord embed description limit is 4096 characters)
+                description_text = "\n".join(appointment_lines)
 
-            if len(description_text) > 4000:
-                # Split into multiple embeds if needed
-                chunks = []
-                current_chunk = []
-                current_length = 0
+                if len(description_text) > 4000:
+                    # Split into multiple embeds if needed
+                    chunks = []
+                    current_chunk = []
+                    current_length = 0
 
-                for line in appointment_lines:
-                    line_length = len(line) + 1  # +1 for newline
-                    if current_length + line_length > 4000:
+                    for line in appointment_lines:
+                        line_length = len(line) + 1  # +1 for newline
+                        if current_length + line_length > 4000:
+                            chunks.append("\n".join(current_chunk))
+                            current_chunk = [line]
+                            current_length = line_length
+                        else:
+                            current_chunk.append(line)
+                            current_length += line_length
+
+                    if current_chunk:
                         chunks.append("\n".join(current_chunk))
-                        current_chunk = [line]
-                        current_length = line_length
-                    else:
-                        current_chunk.append(line)
-                        current_length += line_length
 
-                if current_chunk:
-                    chunks.append("\n".join(current_chunk))
-
-                # Post first embed with header
-                embed = discord.Embed(
-                    title=f"{theme.listIcon} {appointment_type} - {archive_name}",
-                    description=chunks[0],
-                    color=theme.emColor1
-                )
-                embed.set_footer(text=f"Archive from {created_date} • Part 1/{len(chunks)} • Total: {len(appointments)} appointments")
-                await channel.send(embed=embed)
-
-                # Post remaining chunks
-                for i, chunk in enumerate(chunks[1:], start=2):
+                    # Post first embed with header
                     embed = discord.Embed(
-                        description=chunk,
+                        title=f"{theme.listIcon} {appointment_type} - {archive_name}",
+                        description=chunks[0],
                         color=theme.emColor1
                     )
-                    embed.set_footer(text=f"Part {i}/{len(chunks)}")
+                    embed.set_footer(text=f"Archive from {created_date} • Part 1/{len(chunks)} • Total: {len(appointments)} appointments")
                     await channel.send(embed=embed)
-            else:
-                # Single embed
-                embed = discord.Embed(
-                    title=f"{theme.listIcon} {appointment_type} - {archive_name}",
-                    description=description_text,
-                    color=theme.emColor1
+
+                    # Post remaining chunks
+                    for i, chunk in enumerate(chunks[1:], start=2):
+                        embed = discord.Embed(
+                            description=chunk,
+                            color=theme.emColor1
+                        )
+                        embed.set_footer(text=f"Part {i}/{len(chunks)}")
+                        await channel.send(embed=embed)
+                else:
+                    # Single embed
+                    embed = discord.Embed(
+                        title=f"{theme.listIcon} {appointment_type} - {archive_name}",
+                        description=description_text,
+                        color=theme.emColor1
+                    )
+                    embed.set_footer(text=f"Archive from {created_date} • Total: {len(appointments)} appointments")
+                    await channel.send(embed=embed)
+
+                # Show success message
+                success_embed = discord.Embed(
+                    title=f"{theme.verifiedIcon} Posted to Channel",
+                    description=f"Successfully posted **{len(appointments)} {appointment_type}** appointments to {channel.mention}",
+                    color=theme.emColor3
                 )
-                embed.set_footer(text=f"Archive from {created_date} • Total: {len(appointments)} appointments")
-                await channel.send(embed=embed)
 
-            # Show success message
-            success_embed = discord.Embed(
-                title=f"{theme.verifiedIcon} Posted to Channel",
-                description=f"Successfully posted **{len(appointments)} {appointment_type}** appointments to {channel.mention}",
-                color=theme.emColor3
-            )
+                await interaction.followup.send(embed=success_embed, ephemeral=True)
 
-            await interaction.followup.send(embed=success_embed, ephemeral=True)
+                # Return to appointments view
+                await self.show_archive_appointments(interaction, archive_id, appointment_type)
 
-            # Return to appointments view
-            await self.show_archive_appointments(interaction, archive_id, appointment_type)
-
-        except Exception as e:
-            logger.error(f"Error posting to channel: {e}")
-            print(f"Error posting to channel: {e}")
-            await interaction.followup.send(f"{theme.deniedIcon} Error posting to channel: {e}", ephemeral=True)
-        finally:
-            alliance_conn.close()
+            except Exception as e:
+                logger.error(f"Error posting to channel: {e}")
+                print(f"Error posting to channel: {e}")
+                await interaction.followup.send(f"{theme.deniedIcon} Error posting to channel: {e}", ephemeral=True)
 
     async def show_delete_archive_confirmation(self, interaction: discord.Interaction, archive_id: int, archive_info):
         """Show confirmation dialog before deleting an archive"""

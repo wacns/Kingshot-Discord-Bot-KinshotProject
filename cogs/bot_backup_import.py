@@ -11,6 +11,7 @@ from datetime import datetime
 
 import discord
 
+from . import db
 from .alliance_member_edit import new_member_name
 from .permission_handler import PermissionManager
 from .pimp_my_bot import theme, notify_view_expired, menu_timeout, confirm_timeout
@@ -257,9 +258,9 @@ def _import_test_fids(js, settings_db, gt, stats):
 
 def target_summary(db_dir):
     """(existing user count, existing alliance count) - for the pre-import warning."""
-    with closing(sqlite3.connect(os.path.join(db_dir, "users.sqlite"), timeout=30.0)) as conn:
+    with db.connect(os.path.join(db_dir, "users.sqlite")) as conn:
         n_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    with closing(sqlite3.connect(os.path.join(db_dir, "alliance.sqlite"), timeout=30.0)) as conn:
+    with db.connect(os.path.join(db_dir, "alliance.sqlite")) as conn:
         n_alliances = conn.execute("SELECT COUNT(*) FROM alliance_list").fetchone()[0]
     return n_users, n_alliances
 

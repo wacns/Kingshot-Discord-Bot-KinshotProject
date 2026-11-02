@@ -87,9 +87,18 @@ def test_global_submitter_still_writes(monkeypatch):
     mem.commit()
     real_connect = sqlite3.connect
 
+    class _KeepOpen:
+        """db.connect closes its connection; the test still reads `mem` afterwards."""
+
+        def __getattr__(self, name):
+            return getattr(mem, name)
+
+        def close(self):
+            pass
+
     def fake_connect(path, *a, **k):
         if str(path).endswith("settings.sqlite"):
-            return mem
+            return _KeepOpen()
         return real_connect(path, *a, **k)
 
     monkeypatch.setattr(bm.sqlite3, "connect", fake_connect)

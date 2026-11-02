@@ -1,20 +1,21 @@
 """Persist in-progress OCR upload sessions so a crash/restart doesn't lose parsed work."""
 import json
 import os
-import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import discord
 
+from . import db
+
 os.makedirs("db", exist_ok=True)
-_DB = "db/ocr_resume.sqlite"
+_DB = db.OCR_RESUME
 
 # Prune snapshots older than this so a stuck row can't re-post recovery forever.
 STALE_AFTER_HOURS = 6
 
 
 def _conn():
-    return sqlite3.connect(_DB, timeout=30.0, check_same_thread=False)
+    return db.connect(_DB)
 
 
 def _init():

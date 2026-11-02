@@ -15,7 +15,6 @@ import zipfile
 import shutil
 from datetime import datetime, timezone, timedelta
 import logging
-from contextlib import closing
 from importlib.metadata import version as get_package_version, PackageNotFoundError
 from packaging.version import parse as parse_version
 import re
@@ -25,6 +24,7 @@ from .pimp_my_bot import (theme, menu_timeout, MenuView, ConfirmView,
                           MENU_TIMEOUT_MAX_MINUTES, get_confirm_timeout_seconds,
                           set_confirm_timeout_seconds, CONFIRM_TIMEOUT_MAX_SECONDS, confirm_timeout)
 from .browser_headers import get_headers
+from . import db
 from . import process_queue
 from . import gift_state_resolver
 from .bot_restart import is_container, restart_process
@@ -174,7 +174,7 @@ class BotHealth(commands.Cog):
         self.db_path = "db"
         self.log_path = "log"
         self.archive_path = "log/archive"
-        self.settings_db_path = "db/settings.sqlite"
+        self.settings_db_path = db.SETTINGS
         self.gift_api_url = "http://ks-gift-code-api.whiteout-bot.com/giftcode_api.php"
         self.gift_api_key = "super_secret_bot_token_nobody_will_ever_find"
 
@@ -2252,8 +2252,8 @@ async def _bot_owner_only(interaction: discord.Interaction) -> bool:
 
 def _alliances_per_server() -> dict:
     try:
-        with closing(sqlite3.connect(PermissionManager.ALLIANCE_DB)) as db:
-            return dict(db.execute(
+        with db.connect(PermissionManager.ALLIANCE_DB) as alliance_conn:
+            return dict(alliance_conn.execute(
                 "SELECT discord_server_id, COUNT(*) FROM alliance_list GROUP BY discord_server_id").fetchall())
     except sqlite3.Error:
         return {}

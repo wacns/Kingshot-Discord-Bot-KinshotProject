@@ -3,7 +3,9 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Tuple
 import pytz
 
-_OVERRIDES_DB = 'db/beartime.sqlite'
+from cogs import db  # absolute: this module is also imported top-level (cogs/ on sys.path)
+
+_OVERRIDES_DB = db.BEARTIME
 
 
 def get_reference_override(guild_id: Optional[int], event_type: str) -> Optional[str]:
@@ -11,7 +13,7 @@ def get_reference_override(guild_id: Optional[int], event_type: str) -> Optional
     if guild_id is None:
         return None
     try:
-        with sqlite3.connect(_OVERRIDES_DB, timeout=30.0) as conn:
+        with db.connect(_OVERRIDES_DB) as conn:
             row = conn.execute(
                 "SELECT reference_date FROM event_reference_overrides "
                 "WHERE guild_id = ? AND event_type = ?",
@@ -24,7 +26,7 @@ def get_reference_override(guild_id: Optional[int], event_type: str) -> Optional
 
 def set_reference_override(guild_id: int, event_type: str, reference_date: Optional[str]) -> None:
     """Store or clear (None) a server's reference date override for an event."""
-    with sqlite3.connect(_OVERRIDES_DB, timeout=30.0) as conn:
+    with db.connect(_OVERRIDES_DB) as conn:
         if reference_date is None:
             conn.execute(
                 "DELETE FROM event_reference_overrides WHERE guild_id = ? AND event_type = ?",

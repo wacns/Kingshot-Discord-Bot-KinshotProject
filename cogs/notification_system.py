@@ -13,6 +13,7 @@ import json
 import traceback
 import time
 import re
+from . import db
 from .notification_event_types import get_event_types, get_event_icon, get_timezone, utc_offset_zone_name
 from .permission_handler import PermissionManager
 from .pimp_my_bot import theme, safe_edit_message, menu_timeout, confirm_timeout, use_guild_theme
@@ -116,8 +117,8 @@ class QuarantinedNotificationActionView(discord.ui.View):
 
     async def _ensure_admin(self, interaction: discord.Interaction) -> bool:
         try:
-            with sqlite3.connect('db/settings.sqlite') as db:
-                row = db.cursor().execute(
+            with db.connect(db.SETTINGS) as settings_conn:
+                row = settings_conn.cursor().execute(
                     "SELECT 1 FROM admin WHERE id = ?", (interaction.user.id,)
                 ).fetchone()
         except Exception:
@@ -179,7 +180,7 @@ class NotificationSystem(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-        self.db_path = 'db/beartime.sqlite'
+        self.db_path = db.BEARTIME
         os.makedirs('db', exist_ok=True)
         self.conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
         self.cursor = self.conn.cursor()
@@ -558,8 +559,8 @@ class NotificationSystem(commands.Cog):
     async def _send_quarantine_dm(self, *, ts_iso, guild_id, channel_id,
                                   reason, affected, channel_label=None):
         try:
-            with sqlite3.connect('db/settings.sqlite') as db:
-                admins = db.cursor().execute(
+            with db.connect(db.SETTINGS) as settings_conn:
+                admins = settings_conn.cursor().execute(
                     "SELECT id FROM admin WHERE is_initial = 1"
                 ).fetchall()
             if not admins:

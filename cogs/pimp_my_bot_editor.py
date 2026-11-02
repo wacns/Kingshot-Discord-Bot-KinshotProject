@@ -7,6 +7,7 @@ import re
 import time
 import logging
 
+from . import db
 from .pimp_my_bot import menu_timeout
 from .pimp_my_bot import (
     theme, THEME_DB_PATH, DEFAULT_EMOJI, ICON_CATEGORIES, check_interaction_user, build_divider,
@@ -46,7 +47,7 @@ def is_valid_column(column_name: str) -> bool:
 
 def reload_theme_if_active(theme_name: str, guild_id: int = None) -> None:
     """Reload theme if it's currently in use (global active or server override)."""
-    with sqlite3.connect(THEME_DB_PATH) as conn:
+    with db.connect(THEME_DB_PATH) as conn:
         cursor = conn.cursor()
 
         # Check if this theme is the global active theme
@@ -79,7 +80,7 @@ class ThemeWizardSession:
 
     def load_theme_data(self):
         """Load current theme data from database."""
-        with sqlite3.connect(THEME_DB_PATH) as conn:
+        with db.connect(THEME_DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM pimpsettings WHERE themeName=?", (self.theme_name,))
@@ -138,7 +139,7 @@ class ThemeBasicsModal(discord.ui.Modal):
         description = self.description_input.value.strip()
 
         # Check if theme exists
-        with sqlite3.connect(THEME_DB_PATH) as conn:
+        with db.connect(THEME_DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM pimpsettings WHERE themeName=?", (theme_name,))
             if cursor.fetchone()[0] > 0:
@@ -464,7 +465,7 @@ class ThemeEditorHub(discord.ui.View):
         await interaction.response.defer()
 
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 # Build SET clause from DEFAULT_ICON_VALUES
                 set_clauses = [f"{col}=?" for col in DEFAULT_ICON_VALUES.keys()]
@@ -996,7 +997,7 @@ class DividerEditorView(discord.ui.View):
         new_value = 0 if current else 1
 
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     f"UPDATE pimpsettings SET dividerCodeBlock{divider_num}=? WHERE themeName=?",
@@ -1040,7 +1041,7 @@ class DividerEditorView(discord.ui.View):
         await interaction.response.defer()
 
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     UPDATE pimpsettings SET
@@ -1154,7 +1155,7 @@ class DividerModal(discord.ui.Modal):
         await interaction.response.defer()
 
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     f"""UPDATE pimpsettings SET
@@ -1354,7 +1355,7 @@ class ColorEditorView(discord.ui.View):
         await interaction.response.defer()
 
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 # Update all selected fields with the same color
                 for field in self.selected_fields:
@@ -1497,7 +1498,7 @@ class ColorEditorView(discord.ui.View):
         await interaction.response.defer()
 
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     UPDATE pimpsettings SET
@@ -1587,7 +1588,7 @@ class ColorModal(discord.ui.Modal):
         await interaction.response.defer()
 
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     f"UPDATE pimpsettings SET {self.field}=? WHERE themeName=?",

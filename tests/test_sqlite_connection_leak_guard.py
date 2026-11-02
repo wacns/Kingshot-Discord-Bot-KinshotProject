@@ -10,12 +10,12 @@ goes through `db.connect(...)` (short-lived, closed on exit) or
 `db.connect_persistent(...)` (long-lived). This test scans `main.py` and every
 `cogs/*.py` except `cogs/db.py` and fails on:
 
-* a raw `sqlite3.connect(...)` call that is not pending migration, not listed in
+* a raw `sqlite3.connect(...)` call that is not listed in
   ALLOWED_RAW and not one of the temporary long-lived exemptions (below);
 * a connection name used after the `with ... as NAME:` block that owns it has
   ended (the connection is already closed there).
 
-PENDING shrinks as the migration batches land; the long-lived exemptions go away
+The long-lived exemptions go away
 when the persistent connections are migrated.
 """
 from __future__ import annotations
@@ -24,29 +24,6 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-
-# Files that still contain raw `sqlite3.connect` calls waiting to be migrated.
-# Each migration task removes its files from this set; it must end up empty.
-PENDING: set[str] = {
-    # the rest
-    "cogs/pimp_my_bot.py",
-    "cogs/pimp_my_bot_editor.py",
-    "cogs/bear_track.py",
-    "cogs/bot_startup.py",
-    "cogs/bot_main_menu.py",
-    "cogs/notification_editor.py",
-    "cogs/notification_event_types.py",
-    "cogs/notification_system.py",
-    "cogs/minister_menu.py",
-    "cogs/minister_archive.py",
-    "cogs/minister_schedule.py",
-    "cogs/bot_operations.py",
-    "cogs/ocr_resume.py",
-    # non-allowed sites in files that also hold allowed ones (converted in Task 6)
-    "cogs/bot_backup.py",
-    "cogs/bot_backup_import.py",
-    "cogs/bot_health.py",
-}
 
 # (file, function name) -> why a raw `sqlite3.connect` legitimately stays there.
 # "<module>" is a call outside any function.
@@ -61,8 +38,6 @@ ALLOWED_RAW: dict[tuple[str, str], str] = {
         "vacuum helper; keeps applying WAL to every file it vacuums, as before",
     ("main.py", "<module>"):
         "startup bootstrap: long-lived connections handed to create_tables",
-    ("main.py", "on_ready"):
-        "one-off startup summary read of alliance/user counts",
 }
 
 # Temporary exemptions, removed when the persistent connections are migrated.
@@ -152,8 +127,6 @@ def test_no_raw_sqlite_connect():
     offenders = []
     for path in _source_files():
         rel = _rel(path)
-        if rel in PENDING:
-            continue
         for lineno, func in _offending_sites(path):
             offenders.append(f"{rel}:{lineno} (in {func})")
     assert not offenders, (
@@ -172,19 +145,6 @@ def test_allowed_raw_entries_are_not_stale():
                 live.add((rel, func))
     stale = sorted(k for k in set(ALLOWED_RAW) | LONG_LIVED_FUNCS if k not in live)
     assert not stale, f"ALLOWED_RAW / LONG_LIVED_FUNCS entries with no raw connect left: {stale}"
-
-
-def test_pending_list_only_shrinks():
-    stale = []
-    for path in _source_files():
-        rel = _rel(path)
-        if rel in PENDING and not any(True for _ in _offending_sites(path)):
-            stale.append(rel)
-    missing = sorted(p for p in PENDING if not (ROOT / p).exists())
-    assert not stale and not missing, (
-        "PENDING entries that no longer contain a raw sqlite3.connect (remove "
-        f"them): {sorted(stale)}; missing files: {missing}"
-    )
 
 
 def _is_connect_call(node: ast.AST, aliases: set[str]) -> bool:
@@ -255,8 +215,6 @@ def test_no_connection_used_after_its_block():
     offenders = set()
     for path in _source_files():
         rel = _rel(path)
-        if rel in PENDING:
-            continue
         tree = _parse(path)
         aliases = _sqlite_aliases(tree)
         for func in ast.walk(tree):

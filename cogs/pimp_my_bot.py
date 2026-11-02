@@ -14,14 +14,15 @@ import unicodedata
 import aiohttp
 import logging
 from typing import Tuple
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from contextvars import ContextVar
 
 logger = logging.getLogger('bot')
+from . import db
 from .permission_handler import PermissionManager
 
 # Database path constant
-THEME_DB_PATH = 'db/pimpmybot.sqlite'
+THEME_DB_PATH = db.PIMPMYBOT
 
 # Theme Gallery API configuration (temporarily disabled)
 THEME_GALLERY_URL = ""
@@ -229,7 +230,7 @@ _timeout_cache = {}  # setting key -> value; the setters keep it current
 def _timeout_setting(key: str, default: int) -> int:
     if key not in _timeout_cache:
         try:
-            with closing(sqlite3.connect('db/settings.sqlite', timeout=30.0)) as conn:
+            with db.connect(db.SETTINGS) as conn:
                 row = conn.execute("SELECT setting_value FROM bot_global_settings WHERE setting_key = ?",
                                    (key,)).fetchone()
             _timeout_cache[key] = int(row[0]) if row else default
@@ -241,7 +242,7 @@ def _timeout_setting(key: str, default: int) -> int:
 def _save_timeout_setting(key: str, value: int, maximum: int, unit: str) -> None:
     if not 0 <= value <= maximum:
         raise ValueError(f"must be 0-{maximum} {unit}")
-    with closing(sqlite3.connect('db/settings.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.SETTINGS) as conn:
         conn.execute("INSERT OR REPLACE INTO bot_global_settings (setting_key, setting_value) "
                      "VALUES (?, ?)", (key, str(value)))
         conn.commit()
@@ -593,7 +594,7 @@ class ThemeManager:
         # Ensure db directory exists
         os.makedirs(os.path.dirname(THEME_DB_PATH), exist_ok=True)
 
-        with sqlite3.connect(THEME_DB_PATH) as conn:
+        with db.connect(THEME_DB_PATH) as conn:
             cursor = conn.cursor()
 
             # Create table if not exists
@@ -797,7 +798,7 @@ class ThemeManager:
             return
 
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
 
@@ -822,7 +823,7 @@ class ThemeManager:
     def _load_guild_values(self, guild_id: int) -> ThemeValues | None:
         """The server's applied theme, or None when it uses the bot-wide theme."""
         try:
-            with closing(sqlite3.connect(THEME_DB_PATH)) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 conn.row_factory = sqlite3.Row
                 row = conn.execute(
                     "SELECT p.* FROM server_themes s JOIN pimpsettings p ON p.themeName = s.theme_name "
@@ -838,7 +839,7 @@ class ThemeManager:
     def get_server_theme_name(self, guild_id: int) -> str:
         """Get the theme name for a specific server (or global if no override)."""
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
 
                 # Check for server-specific override
@@ -890,7 +891,7 @@ class ThemeMenuView(discord.ui.View):
     def _get_theme_list(self):
         """Get list of all theme names from database with metadata."""
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT themeName, is_active, created_guild_id FROM pimpsettings ORDER BY themeName")
                 return cursor.fetchall()
@@ -900,7 +901,7 @@ class ThemeMenuView(discord.ui.View):
     def _get_global_active_theme(self):
         """Get the name of the globally active theme."""
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT themeName FROM pimpsettings WHERE is_active = 1")
                 result = cursor.fetchone()
@@ -913,7 +914,7 @@ class ThemeMenuView(discord.ui.View):
         if not self.guild_id:
             return None
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT theme_name FROM server_themes WHERE guild_id = ?", (self.guild_id,))
                 result = cursor.fetchone()
@@ -926,7 +927,7 @@ class ThemeMenuView(discord.ui.View):
         if not guild_id:
             return False
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT created_guild_id FROM pimpsettings WHERE themeName=?", (theme_name,))
                 result = cursor.fetchone()
@@ -1205,7 +1206,7 @@ class ThemeMenuView(discord.ui.View):
             return
 
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 # Deactivate all themes
                 cursor.execute("UPDATE pimpsettings SET is_active=0")
@@ -1415,7 +1416,7 @@ class ThemeMenuView(discord.ui.View):
 
         try:
             # Get theme data
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 cursor.execute("SELECT * FROM pimpsettings WHERE themeName=?", (self.selected_theme,))
@@ -1581,7 +1582,7 @@ class DeleteThemeConfirmView(discord.ui.View):
             return
 
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM pimpsettings WHERE themeName=?", (self.theme_name,))
                 conn.commit()
@@ -1670,7 +1671,7 @@ class DeleteThemeView(discord.ui.View):
         self.original_user_id = original_user_id
         self.selected_theme = themename
 
-        with sqlite3.connect(THEME_DB_PATH) as conn:
+        with db.connect(THEME_DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT themeName FROM pimpsettings WHERE themeName != 'default'")
             theme_rows = cursor.fetchall()
@@ -1729,7 +1730,7 @@ class DeleteThemeView(discord.ui.View):
                 )
                 return
 
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM pimpsettings WHERE themeName=?", (self.selected_theme,))
                 conn.commit()
@@ -1810,7 +1811,7 @@ class MultiFieldEditModal(discord.ui.Modal):
                 values = [inp.value.strip() for inp in self.inputs if inp.value.strip()]
                 new_value = ','.join(values)
 
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute("PRAGMA table_info(pimpsettings)")
                 columns_info = cursor.fetchall()
@@ -2025,7 +2026,7 @@ class PaginationView(discord.ui.View):
             # Check if this theme is active
             is_active = False
             try:
-                with sqlite3.connect(THEME_DB_PATH) as conn:
+                with db.connect(THEME_DB_PATH) as conn:
                     cursor = conn.cursor()
                     cursor.execute("SELECT is_active FROM pimpsettings WHERE themeName=?", (self.themename,))
                     result = cursor.fetchone()
@@ -2171,7 +2172,7 @@ class PaginationView(discord.ui.View):
             return
 
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 # Deactivate all themes
                 cursor.execute("UPDATE pimpsettings SET is_active=0")
@@ -2271,7 +2272,7 @@ class PaginationView(discord.ui.View):
                 return
 
             try:
-                with sqlite3.connect(THEME_DB_PATH) as conn:
+                with db.connect(THEME_DB_PATH) as conn:
                     cursor = conn.cursor()
                     cursor.execute("DELETE FROM pimpsettings WHERE themeName=?", (self.themename,))
                     conn.commit()
@@ -2340,7 +2341,7 @@ class Theme(commands.Cog):
         """
         is_admin, is_global = PermissionManager.is_admin(user_id)
 
-        with sqlite3.connect(THEME_DB_PATH) as conn:
+        with db.connect(THEME_DB_PATH) as conn:
             cursor = conn.cursor()
 
             # Check if theme is the global active theme
@@ -2376,7 +2377,7 @@ class Theme(commands.Cog):
 
     def activate_theme_for_server(self, guild_id: int, theme_name: str):
         """Set theme override for a specific server."""
-        with sqlite3.connect(THEME_DB_PATH) as conn:
+        with db.connect(THEME_DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT OR REPLACE INTO server_themes (guild_id, theme_name)
@@ -2386,7 +2387,7 @@ class Theme(commands.Cog):
 
     def clear_server_theme(self, guild_id: int):
         """Remove server-specific theme override (use global theme instead)."""
-        with sqlite3.connect(THEME_DB_PATH) as conn:
+        with db.connect(THEME_DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM server_themes WHERE guild_id = ?", (guild_id,))
             conn.commit()
@@ -2398,7 +2399,7 @@ class Theme(commands.Cog):
 
         try:
             # Get theme data
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 cursor.execute("SELECT * FROM pimpsettings WHERE themeName=?", (theme_name,))
@@ -2576,7 +2577,7 @@ class Theme(commands.Cog):
                             print(f"Emoji upload failed ({resp.status}): {error_text}")
                             return False
 
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 if emoji_name in ICON_NAMES:
                     cursor.execute(f"UPDATE pimpsettings SET {emoji_name}=? WHERE themeName=?", (new_emoji_str, themename))
@@ -2768,7 +2769,7 @@ class Theme(commands.Cog):
 
         # Check if user owns this theme (or is global admin)
         if not is_global:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT created_guild_id FROM pimpsettings WHERE themeName=?", (theme_name,))
                 result = cursor.fetchone()
@@ -2817,7 +2818,7 @@ class Theme(commands.Cog):
 
     async def _theme_autocomplete(self, current: str):
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT themename FROM pimpsettings")
                 themes = [row[0] for row in cursor.fetchall()]
@@ -2833,7 +2834,7 @@ class Theme(commands.Cog):
 
     def _get_theme_data(self, themename: str):
         """Fetch theme data from database."""
-        with sqlite3.connect(THEME_DB_PATH) as conn:
+        with db.connect(THEME_DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM pimpsettings WHERE themeName=?", (themename,))
@@ -2981,7 +2982,7 @@ class Theme(commands.Cog):
         new_theme_name = new_theme_name.strip()
 
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT COUNT(*) FROM pimpsettings WHERE themeName=?", (new_theme_name,))
                 exists = cursor.fetchone()[0] > 0
@@ -3028,7 +3029,7 @@ class Theme(commands.Cog):
         new_theme_name = new_theme_name.strip()
 
         try:
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT COUNT(*) FROM pimpsettings WHERE themeName=?", (new_theme_name,))
                 exists = cursor.fetchone()[0] > 0
@@ -3122,7 +3123,7 @@ class Theme(commands.Cog):
                 await interaction.followup.send(f"{theme.deniedIcon} Theme '{themename}' not found.")
                 return
 
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute("UPDATE pimpsettings SET is_active=0")
                 cursor.execute("UPDATE pimpsettings SET is_active=1 WHERE themeName=?", (themename,))
@@ -3147,7 +3148,7 @@ class Theme(commands.Cog):
         try:
             await interaction.response.defer(thinking=True)
 
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 cursor.execute("SELECT * FROM pimpsettings WHERE themeName=?", (themename,))
@@ -3224,7 +3225,7 @@ class Theme(commands.Cog):
                 theme_name = "imported_default"
 
             # Save to database
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
 
                 # Check if theme exists and make unique name if needed
@@ -3386,7 +3387,7 @@ class Theme(commands.Cog):
                 theme_name = "imported_default"
 
             # Check if theme exists
-            with sqlite3.connect(THEME_DB_PATH) as conn:
+            with db.connect(THEME_DB_PATH) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT COUNT(*) FROM pimpsettings WHERE themeName=?", (theme_name,))
                 exists = cursor.fetchone()[0] > 0

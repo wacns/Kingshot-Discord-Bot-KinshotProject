@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 import sqlite3
 import logging
-from contextlib import closing
+from . import db
 from .permission_handler import PermissionManager
 from .pimp_my_bot import theme, safe_edit_message, menu_timeout, confirm_timeout, check_interaction_user
 from .alliance_api_sync import syncs_names
@@ -502,7 +502,7 @@ class MinisterSettingsView(discord.ui.View):
             return
         
         try:
-            with closing(sqlite3.connect("db/svs.sqlite")) as svs_conn:
+            with db.connect(db.SVS) as svs_conn:
                 svs_cursor = svs_conn.cursor()
                 svs_cursor.execute("DELETE FROM reference WHERE context=?", ("minister guild id",))
                 svs_conn.commit()
@@ -1449,7 +1449,7 @@ class MinisterMenu(commands.Cog):
                     await interaction.response.defer()
                     
                     cleared_channels = []
-                    with closing(sqlite3.connect("db/svs.sqlite")) as svs_conn:
+                    with db.connect(db.SVS) as svs_conn:
                         svs_cursor = svs_conn.cursor()
 
                         for value in select.values:

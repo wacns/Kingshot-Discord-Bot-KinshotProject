@@ -4,9 +4,9 @@ Startup DM and orphan detection. Sends status reports to admins and detects orph
 import discord
 from discord.ext import commands
 from discord import app_commands
-import sqlite3
 import logging
 from datetime import datetime
+from . import db
 from .pimp_my_bot import theme, menu_timeout
 
 logger = logging.getLogger('bot')
@@ -101,7 +101,7 @@ class OrphanCleanupView(OrphanViewBase):
         total_count = sum(len(users) for users in self.orphaned_users.values())
         all_fids = [fid for users in self.orphaned_users.values() for fid, _ in users]
 
-        with sqlite3.connect('db/users.sqlite') as conn:
+        with db.connect(db.USERS) as conn:
             cursor = conn.cursor()
             for fid in all_fids:
                 cursor.execute("DELETE FROM users WHERE fid = ?", (fid,))
@@ -124,7 +124,7 @@ class OrphanCleanupView(OrphanViewBase):
         if await self.check_already_resolved(interaction):
             return
 
-        with sqlite3.connect('db/alliance.sqlite') as conn:
+        with db.connect(db.ALLIANCE) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT alliance_id, name FROM alliance_list ORDER BY name")
             alliances = cursor.fetchall()
@@ -193,7 +193,7 @@ class OrphanDetailView(OrphanViewBase):
         alliance_id = self.alliance_ids[self.current_index]
         users = self.orphaned_users[alliance_id]
 
-        with sqlite3.connect('db/users.sqlite') as conn:
+        with db.connect(db.USERS) as conn:
             cursor = conn.cursor()
             for fid, _ in users:
                 cursor.execute("DELETE FROM users WHERE fid = ?", (fid,))
@@ -265,7 +265,7 @@ class ReassignSelectView(OrphanViewBase):
         total_count = sum(len(users) for users in self.orphaned_users.values())
         all_fids = [fid for users in self.orphaned_users.values() for fid, _ in users]
 
-        with sqlite3.connect('db/users.sqlite') as conn:
+        with db.connect(db.USERS) as conn:
             cursor = conn.cursor()
             for fid in all_fids:
                 cursor.execute("UPDATE users SET alliance = ? WHERE fid = ?", (target_alliance_id, fid))
@@ -302,8 +302,8 @@ class BotStartup(commands.Cog):
 
     def get_orphaned_users(self) -> dict:
         """Returns {alliance_id: [(fid, nickname), ...]} for orphaned users"""
-        with sqlite3.connect('db/users.sqlite') as conn_users:
-            with sqlite3.connect('db/alliance.sqlite') as conn_alliance:
+        with db.connect(db.USERS) as conn_users:
+            with db.connect(db.ALLIANCE) as conn_alliance:
                 cursor_alliance = conn_alliance.cursor()
                 cursor_alliance.execute("SELECT alliance_id FROM alliance_list")
                 valid_alliances = {str(row[0]) for row in cursor_alliance.fetchall()}
@@ -331,8 +331,8 @@ class BotStartup(commands.Cog):
 
         total_count = sum(len(users) for users in orphaned.values())
 
-        with sqlite3.connect('db/settings.sqlite') as db:
-            cursor = db.cursor()
+        with db.connect(db.SETTINGS) as settings_conn:
+            cursor = settings_conn.cursor()
             cursor.execute("SELECT id FROM admin WHERE is_initial = 1")
             admins = cursor.fetchall()
 
@@ -363,7 +363,7 @@ class BotStartup(commands.Cog):
         self.bot.startup_dm_sent = True
 
         try:
-            with sqlite3.connect('db/settings.sqlite') as settings_db:
+            with db.connect(db.SETTINGS) as settings_db:
                 cursor = settings_db.cursor()
                 cursor.execute("SELECT id FROM admin WHERE is_initial = 1 LIMIT 1")
                 result = cursor.fetchone()
@@ -416,7 +416,7 @@ class BotStartup(commands.Cog):
 
                     await admin_user.send(embed=status_embed)
 
-                    with sqlite3.connect('db/alliance.sqlite') as alliance_db:
+                    with db.connect(db.ALLIANCE) as alliance_db:
                         cursor = alliance_db.cursor()
                         cursor.execute("SELECT alliance_id, name FROM alliance_list")
                         alliances = cursor.fetchall()
@@ -426,9 +426,9 @@ class BotStartup(commands.Cog):
                         alliance_info = []
 
                         # One connection per DB for the whole loop, not per alliance.
-                        with sqlite3.connect('db/users.sqlite') as users_db, \
-                             sqlite3.connect('db/alliance.sqlite') as alliance_db, \
-                             sqlite3.connect('db/giftcode.sqlite') as gift_db:
+                        with db.connect(db.USERS) as users_db, \
+                             db.connect(db.ALLIANCE) as alliance_db, \
+                             db.connect(db.GIFTCODE) as gift_db:
                             users_cur = users_db.cursor()
                             alliance_cur = alliance_db.cursor()
                             gift_cur = gift_db.cursor()
