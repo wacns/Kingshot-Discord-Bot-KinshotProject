@@ -5,11 +5,16 @@ Ensures the repo root (so `import cogs.*` resolves) and this tests dir (so
 invoked from. Also skips suites whose target cog isn't present in the current
 checkout, so the run never hard-errors on a version that lacks a feature.
 """
+import os
 import sqlite3
 import sys
 from pathlib import Path
 
 import pytest
+
+# Long-lived connections from db.connect_persistent raise if a second thread
+# uses them (the event loop and a worker thread must never share one).
+os.environ["KSBOT_DB_THREAD_CHECK"] = "1"
 
 _HERE = Path(__file__).resolve().parent
 _REPO = _HERE.parent

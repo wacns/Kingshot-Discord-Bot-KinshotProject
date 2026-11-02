@@ -5,7 +5,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import asyncio
-import sqlite3
 import logging
 from datetime import datetime
 from . import db
@@ -153,24 +152,14 @@ class ChannelSelect(discord.ui.ChannelSelect):
 class MinisterSchedule(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.users_conn = sqlite3.connect('db/users.sqlite', timeout=30.0, check_same_thread=False)
+        self.users_conn = db.connect_persistent(db.USERS)
         self.users_cursor = self.users_conn.cursor()
-        self.settings_conn = sqlite3.connect('db/settings.sqlite', timeout=30.0, check_same_thread=False)
+        self.settings_conn = db.connect_persistent(db.SETTINGS)
         self.settings_cursor = self.settings_conn.cursor()
-        self.alliance_conn = sqlite3.connect('db/alliance.sqlite', timeout=30.0, check_same_thread=False)
+        self.alliance_conn = db.connect_persistent(db.ALLIANCE)
         self.alliance_cursor = self.alliance_conn.cursor()
-        self.svs_conn = sqlite3.connect("db/svs.sqlite", timeout=30.0, check_same_thread=False)
+        self.svs_conn = db.connect_persistent(db.SVS)
         self.svs_cursor = self.svs_conn.cursor()
-
-        # Enable WAL mode for better concurrent access
-        self.users_conn.execute("PRAGMA journal_mode=WAL")
-        self.users_conn.execute("PRAGMA synchronous=NORMAL")
-        self.settings_conn.execute("PRAGMA journal_mode=WAL")
-        self.settings_conn.execute("PRAGMA synchronous=NORMAL")
-        self.alliance_conn.execute("PRAGMA journal_mode=WAL")
-        self.alliance_conn.execute("PRAGMA synchronous=NORMAL")
-        self.svs_conn.execute("PRAGMA journal_mode=WAL")
-        self.svs_conn.execute("PRAGMA synchronous=NORMAL")
 
         self.svs_cursor.execute("""
                     CREATE TABLE IF NOT EXISTS appointments (

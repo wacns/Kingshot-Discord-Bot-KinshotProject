@@ -59,16 +59,13 @@ class _OwnerCheckedCursor(sqlite3.Cursor):
 
 
 class _OwnerCheckedConnection(sqlite3.Connection):
-    """Test-only: raises if used from a thread other than the first user's."""
+    """Test-only: raises if used from a thread other than the creating one."""
 
     _owner = None
     _path = ""
 
     def _check_owner(self):
-        me = threading.get_ident()
-        if self._owner is None:
-            self._owner = me
-        elif self._owner != me:
+        if self._owner != threading.get_ident():
             raise RuntimeError(
                 f"persistent connection to {self._path} used from a second thread")
 
@@ -95,9 +92,14 @@ def connect_persistent(path: str, *, timeout: float = DEFAULT_TIMEOUT) -> sqlite
         conn = sqlite3.connect(path, timeout=timeout, check_same_thread=False,
                                factory=_OwnerCheckedConnection)
         conn._path = path
+        conn._owner = threading.get_ident()
     else:
         conn = sqlite3.connect(path, timeout=timeout, check_same_thread=False)
-    _apply_pragmas(conn, path)
+    try:
+        _apply_pragmas(conn, path)
+    except BaseException:
+        conn.close()
+        raise
     return conn
 
 

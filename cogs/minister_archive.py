@@ -3,7 +3,6 @@ Minister archive. Stores and displays historical minister appointment data.
 """
 import discord
 from discord.ext import commands
-import sqlite3
 import logging
 from datetime import datetime
 import json
@@ -393,9 +392,9 @@ class ChangeHistoryView(discord.ui.View):
 class MinisterArchive(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.svs_conn = sqlite3.connect("db/svs.sqlite", timeout=30.0, check_same_thread=False)
+        self.svs_conn = db.connect_persistent(db.SVS)
         self.svs_cursor = self.svs_conn.cursor()
-        self.users_conn = sqlite3.connect('db/users.sqlite', timeout=30.0, check_same_thread=False)
+        self.users_conn = db.connect_persistent(db.USERS)
         self.users_cursor = self.users_conn.cursor()
 
         # Create archive tables

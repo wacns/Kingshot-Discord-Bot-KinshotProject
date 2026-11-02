@@ -7,11 +7,13 @@ survive bot restarts.
 import asyncio
 import json
 import logging
-import sqlite3
+import threading
 from datetime import datetime
 from typing import Callable, Dict, Optional
 
 from discord.ext import commands
+
+from . import db
 
 logger = logging.getLogger('bot')
 
@@ -28,6 +30,11 @@ HANDLER_TIMEOUT_SECONDS = 7200
 HANDLER_TIMEOUT_EXEMPT = ('state_resolve', 'api_sync')
 # Handlers that call should_preempt() between steps, so a stop request takes effect mid-run.
 STOPPABLE_ACTIONS = ('gift_redeem', 'member_add', 'state_resolve', 'api_sync')
+
+_ENQUEUE_SQL = """
+            INSERT INTO process_queue (action, status, priority, alliance_id, details, created_at)
+            VALUES (?, 'queued', ?, ?, ?, ?)
+        """
 
 
 class PreemptedException(Exception):
@@ -51,12 +58,15 @@ class ProcessQueue(commands.Cog):
 
     HANDLER_GRACE_SECONDS = 3  # let sibling cogs (re-)register handlers first
 
+    # The thread that owns self.conn (the event loop's) and the loop the processor
+    # runs on; class defaults keep queues built without __init__ (tests) working.
+    _owner_thread: Optional[int] = None
+    _loop: Optional[asyncio.AbstractEventLoop] = None
+
     def __init__(self, bot):
         self.bot = bot
-        self.conn = sqlite3.connect('db/settings.sqlite', timeout=30.0, check_same_thread=False)
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=NORMAL")
-        self.conn.commit()
+        self.conn = db.connect_persistent(db.SETTINGS)
+        self._owner_thread = threading.get_ident()
         self.cursor = self.conn.cursor()
 
         self._handlers: Dict[str, Callable] = {}
@@ -133,20 +143,38 @@ class ProcessQueue(commands.Cog):
         """
         details_json = json.dumps(details or {})
         created_at = datetime.now().isoformat()
+        params = (action, priority, alliance_id, details_json, created_at)
 
-        self.cursor.execute("""
-            INSERT INTO process_queue (action, status, priority, alliance_id, details, created_at)
-            VALUES (?, 'queued', ?, ?, ?, ?)
-        """, (action, priority, alliance_id, details_json, created_at))
-        self.conn.commit()
-        process_id = self.cursor.lastrowid
+        if self._on_owner_thread():
+            self.cursor.execute(_ENQUEUE_SQL, params)
+            self.conn.commit()
+            process_id = self.cursor.lastrowid
+        else:
+            # Called from a worker thread (asyncio.to_thread): the long-lived
+            # connection belongs to the event loop, so write through our own.
+            with db.connect(db.SETTINGS) as conn:
+                process_id = conn.execute(_ENQUEUE_SQL, params).lastrowid
 
         logger.info(f"ProcessQueue: Enqueued {action} (id={process_id}, priority={priority}, alliance={alliance_id})")
 
-        # Wake the processor
-        self._wake_event.set()
+        self._wake()
 
         return process_id
+
+    def _on_owner_thread(self) -> bool:
+        return self._owner_thread is None or self._owner_thread == threading.get_ident()
+
+    def _wake(self):
+        """Wake the processor; asyncio.Event is only safe to set from its loop's thread."""
+        loop = self._loop
+        if self._on_owner_thread() or loop is None:
+            # No loop recorded means the processor never started, so nothing waits on the event.
+            self._wake_event.set()
+            return
+        try:
+            loop.call_soon_threadsafe(self._wake_event.set)
+        except RuntimeError:
+            pass  # loop already closed: nothing left to wake
 
     def get_next_queued(self) -> Optional[Dict]:
         """Get the highest-priority queued process that has a handler, or None."""
@@ -365,6 +393,7 @@ class ProcessQueue(commands.Cog):
     async def start_processor(self):
         """Start the background processor task if not already running."""
         if self._processor_task is None or self._processor_task.done():
+            self._loop = asyncio.get_running_loop()
             self._processor_task = asyncio.create_task(self._processor_loop())
             logger.info("ProcessQueue: Processor task started")
 

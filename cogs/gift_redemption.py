@@ -76,26 +76,29 @@ CONCLUSIVE_STATUSES = ('SUCCESS', 'RECEIVED', 'SAME TYPE EXCHANGE',
                        'TIME_ERROR', 'CDK_NOT_FOUND', 'USAGE_LIMIT')
 
 
-def pending_codes_for_member(cog, fid):
-    """Still-valid codes this member hasn't conclusively redeemed, newest first."""
+def pending_codes_for_member(cog, fid, conn=None):
+    """Still-valid codes this member hasn't conclusively redeemed, newest first.
+    Off the event loop, pass `conn` (a giftcode connection of that thread)."""
     placeholders = ",".join("?" for _ in CONCLUSIVE_STATUSES)
-    cog.cursor.execute(f"""
+    cursor = conn.cursor() if conn is not None else cog.cursor
+    cursor.execute(f"""
         SELECT g.giftcode FROM gift_codes g
         LEFT JOIN user_giftcodes u ON u.giftcode = g.giftcode AND u.fid = ?
         WHERE g.validation_status != 'invalid'
           AND (u.status IS NULL OR u.status NOT IN ({placeholders}))
         ORDER BY g.date DESC
     """, (fid, *CONCLUSIVE_STATUSES))
-    return [row[0] for row in cog.cursor.fetchall()]
+    return [row[0] for row in cursor.fetchall()]
 
 
-def enqueue_member_redemption(cog, fid, nickname=None):
-    """Catch one member up on every code they're still owed; returns how many were queued."""
+def enqueue_member_redemption(cog, fid, nickname=None, *, conn=None):
+    """Catch one member up on every code they're still owed; returns how many were queued.
+    Off the event loop, pass `conn` (a giftcode connection of that thread)."""
     process_queue = cog.bot.get_cog('ProcessQueue')
     if not process_queue:
         cog.logger.error("ProcessQueue cog not available, cannot enqueue member redemption")
         return 0
-    codes = pending_codes_for_member(cog, fid)
+    codes = pending_codes_for_member(cog, fid, conn)
     if not codes:
         return 0
     process_queue.enqueue(

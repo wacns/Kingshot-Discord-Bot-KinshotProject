@@ -2763,10 +2763,7 @@ class BearTrack(commands.Cog):
     def _open_db(path):
         """Open a SQLite connection with the cog's standard WAL settings.
         Returns (connection, cursor)."""
-        conn = sqlite3.connect(path, timeout=30.0, check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.commit()
+        conn = db.connect_persistent(path)
         return conn, conn.cursor()
 
     async def cog_unload(self):
@@ -3133,14 +3130,12 @@ class BearTrack(commands.Cog):
     # -------------------------------------------------------------------
 
     async def alliance_autocomplete(self, interaction: discord.Interaction, current: str):
-        def _query():
-            cur = self.alliance_conn.cursor()
-            cur.execute(
-                "SELECT alliance_id, name FROM alliance_list WHERE name LIKE ? ORDER BY name LIMIT 20",
-                (f"%{current}%",)
-            )
-            return cur.fetchall()
-        rows = await asyncio.to_thread(_query)
+        # Off the loop on a fresh connection; self.alliance_conn belongs to the loop thread.
+        rows = await db.fetchall(
+            db.ALLIANCE,
+            "SELECT alliance_id, name FROM alliance_list WHERE name LIKE ? ORDER BY name LIMIT 20",
+            (f"%{current}%",)
+        )
         return [
             discord.app_commands.Choice(name=row[1], value=str(row[0]))
             for row in rows
@@ -3163,15 +3158,13 @@ class BearTrack(commands.Cog):
             alliance_id = int(alliance_val)
         except (TypeError, ValueError):
             return []
-        def _query():
-            cur = self.users_conn.cursor()
-            cur.execute(
-                "SELECT fid, nickname FROM users WHERE alliance = ? AND nickname LIKE ? "
-                "ORDER BY nickname LIMIT 25",
-                (str(alliance_id), f"%{current}%"),
-            )
-            return cur.fetchall()
-        rows = await asyncio.to_thread(_query)
+        # Off the loop on a fresh connection; self.users_conn belongs to the loop thread.
+        rows = await db.fetchall(
+            db.USERS,
+            "SELECT fid, nickname FROM users WHERE alliance = ? AND nickname LIKE ? "
+            "ORDER BY nickname LIMIT 25",
+            (str(alliance_id), f"%{current}%"),
+        )
         return [
             discord.app_commands.Choice(name=f"{nick} ({fid})", value=str(fid))
             for fid, nick in rows

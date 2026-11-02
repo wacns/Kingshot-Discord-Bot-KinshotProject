@@ -1,7 +1,6 @@
 """The /w "who is" command. Shows the stored profile for an in-game ID, or a live Player Sync lookup."""
 import discord
 from discord.ext import commands
-import sqlite3
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -36,7 +35,7 @@ def _format_big_int(n) -> str:
 class WCommand(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.conn = sqlite3.connect('db/changes.sqlite', timeout=30.0, check_same_thread=False)
+        self.conn = db.connect_persistent(db.CHANGES)
         self.c = self.conn.cursor()
 
         self.level_mapping = {

@@ -4,7 +4,6 @@ Minister scheduling menu. UI for managing state minister appointments and rotati
 import asyncio
 import discord
 from discord.ext import commands
-import sqlite3
 import logging
 from . import db
 from .permission_handler import PermissionManager
@@ -838,11 +837,11 @@ class TimeSelect(discord.ui.Select):
 class MinisterMenu(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.users_conn = sqlite3.connect('db/users.sqlite', timeout=30.0, check_same_thread=False)
+        self.users_conn = db.connect_persistent(db.USERS)
         self.users_cursor = self.users_conn.cursor()
-        self.alliance_conn = sqlite3.connect('db/alliance.sqlite', timeout=30.0, check_same_thread=False)
+        self.alliance_conn = db.connect_persistent(db.ALLIANCE)
         self.alliance_cursor = self.alliance_conn.cursor()
-        self.svs_conn = sqlite3.connect("db/svs.sqlite", timeout=30.0, check_same_thread=False)
+        self.svs_conn = db.connect_persistent(db.SVS)
         self.svs_cursor = self.svs_conn.cursor()
 
     async def cog_unload(self):

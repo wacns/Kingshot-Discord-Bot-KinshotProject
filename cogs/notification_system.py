@@ -182,13 +182,8 @@ class NotificationSystem(commands.Cog):
 
         self.db_path = db.BEARTIME
         os.makedirs('db', exist_ok=True)
-        self.conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+        self.conn = db.connect_persistent(self.db_path)
         self.cursor = self.conn.cursor()
-
-        # Enable WAL mode for better concurrency with other cogs
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=NORMAL")
-        self.conn.commit()
 
         # Channel access is confirmed only when a notification is actually due to send.
         # (channel_id -> {'fails', 'last'}).

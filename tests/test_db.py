@@ -150,3 +150,38 @@ def test_persistent_without_flag_allows_any_thread(monkeypatch):
         assert _in_second_thread(lambda: conn.execute("SELECT 1")) == []
     finally:
         conn.close()
+
+
+def test_persistent_owner_is_the_creating_thread_for_non_wal_files(monkeypatch):
+    # Non-WAL files run no pragma at creation, so the owner must not depend
+    # on whichever thread happens to use the connection first.
+    monkeypatch.setenv("KSBOT_DB_THREAD_CHECK", "1")
+    conn = db.connect_persistent(db.ATTENDANCE)
+    try:
+        errors = _in_second_thread(lambda: conn.execute("SELECT 1"))
+        assert len(errors) == 1 and isinstance(errors[0], RuntimeError)
+        assert "used from a second thread" in str(errors[0])
+        conn.execute("SELECT 1")  # the creating thread may still use it
+    finally:
+        conn.close()
+
+
+def test_persistent_closes_connection_when_pragmas_fail(monkeypatch):
+    opened = []
+    real_connect = sqlite3.connect
+
+    def spy(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        opened.append(conn)
+        return conn
+
+    def boom(conn, path):
+        raise sqlite3.OperationalError("pragma failed")
+
+    monkeypatch.setattr(db.sqlite3, "connect", spy)
+    monkeypatch.setattr(db, "_apply_pragmas", boom)
+    with pytest.raises(sqlite3.OperationalError, match="pragma failed"):
+        db.connect_persistent(db.USERS)
+    assert len(opened) == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        opened[0].execute("SELECT 1")

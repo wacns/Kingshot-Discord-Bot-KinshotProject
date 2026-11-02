@@ -24,10 +24,10 @@ class AllianceRegistration(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-        self.conn_alliance = sqlite3.connect("db/alliance.sqlite", timeout=30.0, check_same_thread=False)
+        self.conn_alliance = db.connect_persistent(db.ALLIANCE)
         self.c_alliance = self.conn_alliance.cursor()
 
-        self.conn_users = sqlite3.connect("db/users.sqlite", timeout=30.0, check_same_thread=False)
+        self.conn_users = db.connect_persistent(db.USERS)
         self.c_users = self.conn_users.cursor()
 
     async def cog_unload(self):

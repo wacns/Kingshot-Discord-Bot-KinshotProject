@@ -12,6 +12,7 @@ import discord
 import ssl
 import logging
 from .pimp_my_bot import theme
+from . import db
 from .browser_headers import get_headers
 
 logger = logging.getLogger('gift')
@@ -40,14 +41,14 @@ class GiftCodeAPI:
             self.cursor = self.conn.cursor()
             self._owns_conn = False
         else:
-            self.conn = sqlite3.connect('db/giftcode.sqlite', timeout=30.0, check_same_thread=False)
+            self.conn = db.connect_persistent(db.GIFTCODE)
             self.cursor = self.conn.cursor()
             self._owns_conn = True
 
-        self.settings_conn = sqlite3.connect('db/settings.sqlite', timeout=30.0, check_same_thread=False)
+        self.settings_conn = db.connect_persistent(db.SETTINGS)
         self.settings_cursor = self.settings_conn.cursor()
 
-        self.users_conn = sqlite3.connect('db/users.sqlite', timeout=30.0, check_same_thread=False)
+        self.users_conn = db.connect_persistent(db.USERS)
         self.users_cursor = self.users_conn.cursor()
         
         # Configure SQLite for better concurrent access, avoid DB locks

@@ -10,13 +10,11 @@ goes through `db.connect(...)` (short-lived, closed on exit) or
 `db.connect_persistent(...)` (long-lived). This test scans `main.py` and every
 `cogs/*.py` except `cogs/db.py` and fails on:
 
-* a raw `sqlite3.connect(...)` call that is not listed in
-  ALLOWED_RAW and not one of the temporary long-lived exemptions (below);
+* a raw `sqlite3.connect(...)` call that is not listed in ALLOWED_RAW -
+  including long-lived `self.<name> = sqlite3.connect(...)` connections,
+  which must use `db.connect_persistent(...)`;
 * a connection name used after the `with ... as NAME:` block that owns it has
   ended (the connection is already closed there).
-
-The long-lived exemptions go away
-when the persistent connections are migrated.
 """
 from __future__ import annotations
 
@@ -38,13 +36,6 @@ ALLOWED_RAW: dict[tuple[str, str], str] = {
         "vacuum helper; keeps applying WAL to every file it vacuums, as before",
     ("main.py", "<module>"):
         "startup bootstrap: long-lived connections handed to create_tables",
-}
-
-# Temporary exemptions, removed when the persistent connections are migrated.
-# 1. `self.<name> = sqlite3.connect(...)` (long-lived instance connection).
-# 2. The persistent opener in bear_track.
-LONG_LIVED_FUNCS: set[tuple[str, str]] = {
-    ("cogs/bear_track.py", "_open_db"),
 }
 
 
@@ -84,43 +75,28 @@ def _is_raw_connect(node: ast.AST, aliases: set[str]) -> bool:
 
 
 def _raw_connect_sites(tree: ast.AST):
-    """Yield (lineno, enclosing function name or '<module>', is_self_assignment)."""
+    """Yield (lineno, enclosing function name or '<module>')."""
     aliases = _sqlite_aliases(tree)
 
-    def walk(node, func, self_assigned):
+    def walk(node, func):
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 nfunc = child.name
             else:
                 nfunc = func
-            child_self = self_assigned
-            if (
-                isinstance(child, ast.Assign)
-                and len(child.targets) == 1
-                and isinstance(child.targets[0], ast.Attribute)
-                and isinstance(child.targets[0].value, ast.Name)
-                and child.targets[0].value.id == "self"
-                and _is_raw_connect(child.value, aliases)
-            ):
-                # Mark only this one call as a `self.x = sqlite3.connect(...)`.
-                yield child.value.lineno, nfunc, True
-                continue
-            if _is_raw_connect(child, aliases) and not child_self:
-                yield child.lineno, nfunc, False
-            yield from walk(child, nfunc, child_self)
+            if _is_raw_connect(child, aliases):
+                yield child.lineno, nfunc
+            yield from walk(child, nfunc)
 
-    yield from walk(tree, "<module>", False)
+    yield from walk(tree, "<module>")
 
 
 def _offending_sites(path: Path):
-    """Raw connects not covered by a temporary or permanent exemption."""
+    """Raw connects not covered by an ALLOWED_RAW entry."""
     rel = _rel(path)
-    for lineno, func, is_self in _raw_connect_sites(_parse(path)):
-        if is_self:
-            continue
-        if (rel, func) in ALLOWED_RAW or (rel, func) in LONG_LIVED_FUNCS:
-            continue
-        yield lineno, func
+    for lineno, func in _raw_connect_sites(_parse(path)):
+        if (rel, func) not in ALLOWED_RAW:
+            yield lineno, func
 
 
 def test_no_raw_sqlite_connect():
@@ -140,11 +116,10 @@ def test_allowed_raw_entries_are_not_stale():
     live = set()
     for path in _source_files():
         rel = _rel(path)
-        for _lineno, func, is_self in _raw_connect_sites(_parse(path)):
-            if not is_self:
-                live.add((rel, func))
-    stale = sorted(k for k in set(ALLOWED_RAW) | LONG_LIVED_FUNCS if k not in live)
-    assert not stale, f"ALLOWED_RAW / LONG_LIVED_FUNCS entries with no raw connect left: {stale}"
+        for _lineno, func in _raw_connect_sites(_parse(path)):
+            live.add((rel, func))
+    stale = sorted(k for k in ALLOWED_RAW if k not in live)
+    assert not stale, f"ALLOWED_RAW entries with no raw connect left: {stale}"
 
 
 def _is_connect_call(node: ast.AST, aliases: set[str]) -> bool:
