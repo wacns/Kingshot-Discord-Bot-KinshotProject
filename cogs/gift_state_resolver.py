@@ -10,12 +10,12 @@ import hashlib
 import random
 import sqlite3
 import string
-from contextlib import closing
 from datetime import datetime, timedelta
 
 import requests
 from requests.adapters import HTTPAdapter
 
+from . import db
 from .browser_headers import get_headers
 
 PER_FID_INTERVAL = 2.2      # seconds between probes on the SAME fid (per-FID limit)
@@ -92,7 +92,7 @@ def _candidate_kids(fid):
     """Ordered kid candidates for `fid`: the alliance's bound state, then the states
     alliance-mates are in (most common first). Best-effort; DB errors -> []."""
     try:
-        with sqlite3.connect('db/users.sqlite', timeout=30.0) as uconn:
+        with db.connect(db.USERS) as uconn:
             row = uconn.execute("SELECT alliance FROM users WHERE fid = ?", (fid,)).fetchone()
             alliance = row[0] if row else None
             mates = []
@@ -105,7 +105,7 @@ def _candidate_kids(fid):
     candidates = []
     try:
         if alliance is not None:
-            with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as aconn:
+            with db.connect(db.ALLIANCE) as aconn:
                 arow = aconn.execute(
                     "SELECT kid FROM alliance_list WHERE alliance_id = ?", (alliance,)).fetchone()
                 if arow and arow[0] is not None:
@@ -123,7 +123,7 @@ def _candidate_kids(fid):
 def _reference_center(fid):
     """State to center a transfer-window scan on: the member's own (possibly stale) kid
     if they have one - a transfer lands within ~200 of it - else their alliance's state."""
-    with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+    with db.connect(db.USERS) as conn:
         row = conn.execute("SELECT kid, alliance FROM users WHERE fid = ?", (fid,)).fetchone()
     if not row:
         return None
@@ -233,7 +233,7 @@ BIND_MIN_KNOWN = 3          # and at least this many members must have a known k
 
 def _state_distribution(alliance_id):
     """[(kid, count), ...] most-common first, for members with a known kid."""
-    with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+    with db.connect(db.USERS) as conn:
         return conn.execute(
             "SELECT kid, COUNT(*) FROM users WHERE alliance = ? AND kid IS NOT NULL "
             "GROUP BY kid ORDER BY COUNT(*) DESC", (str(alliance_id),)).fetchall()
@@ -241,7 +241,7 @@ def _state_distribution(alliance_id):
 
 def _state_distributions():
     """{alliance: [(kid, count), ...] most-common first} for every alliance, in one query."""
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.USERS) as conn:
         rows = conn.execute("SELECT alliance, kid, COUNT(*) FROM users WHERE kid IS NOT NULL "
                             "GROUP BY alliance, kid ORDER BY COUNT(*) DESC").fetchall()
     by_alliance = {}
@@ -268,14 +268,14 @@ def compute_alliance_binding(alliance_id, *, threshold=BIND_THRESHOLD, min_known
 
 def apply_alliance_binding(alliance_id, kid):
     """Write the alliance's bound state to alliance_list.kid."""
-    with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+    with db.connect(db.ALLIANCE) as conn:
         conn.execute("UPDATE alliance_list SET kid = ? WHERE alliance_id = ?", (kid, alliance_id))
         conn.commit()
 
 
 def get_alliance_kid(alliance_id):
     """The alliance's currently-bound state, or None."""
-    with closing(sqlite3.connect('db/alliance.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.ALLIANCE) as conn:
         row = conn.execute(
             "SELECT kid FROM alliance_list WHERE alliance_id = ?", (alliance_id,)).fetchone()
     return row[0] if row and row[0] is not None else None
@@ -283,14 +283,14 @@ def get_alliance_kid(alliance_id):
 
 def get_member_alliance(fid):
     """The member's alliance, or None."""
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.USERS) as conn:
         row = conn.execute("SELECT alliance FROM users WHERE fid = ?", (fid,)).fetchone()
     return row[0] if row else None
 
 
 def is_multistate(alliance_id):
     """True if the alliance is flagged multistate (members span many states - never bound)."""
-    with closing(sqlite3.connect('db/alliance.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.ALLIANCE) as conn:
         row = conn.execute(
             "SELECT multistate FROM alliance_list WHERE alliance_id = ?", (alliance_id,)).fetchone()
     return bool(row and row[0])
@@ -306,7 +306,7 @@ def left_alliance_state(alliance_id, kid):
 
 def set_multistate(alliance_id, on):
     """Flag/unflag an alliance as multistate. Flagging clears any home state and lock."""
-    with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+    with db.connect(db.ALLIANCE) as conn:
         if on:
             conn.execute(
                 "UPDATE alliance_list SET multistate = 1, kid = NULL, state_locked = 0 WHERE alliance_id = ?",
@@ -319,7 +319,7 @@ def set_multistate(alliance_id, on):
 def survey_alliance_bindings(*, threshold=BIND_THRESHOLD, min_known=BIND_MIN_KNOWN):
     """Per alliance: proposed binding + confidence, without writing anything.
     Returns [{alliance_id, name, current_kid, multistate, proposed_kid, share, known}]."""
-    with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+    with db.connect(db.ALLIANCE) as conn:
         alliances = conn.execute(
             "SELECT alliance_id, name, kid, COALESCE(multistate, 0), COALESCE(state_locked, 0) "
             "FROM alliance_list").fetchall()
@@ -396,7 +396,7 @@ def set_user_kid(fid, kid, *, conn=None):
     if conn is not None:
         conn.execute(sql, (kid, fid))
         return
-    with sqlite3.connect('db/users.sqlite', timeout=30.0) as own:
+    with db.connect(db.USERS) as own:
         own.execute(sql, (kid, fid))
         own.commit()
 
@@ -405,7 +405,7 @@ def set_user_kid(fid, kid, *, conn=None):
 
 def flag_state_mismatch(fid):
     """Mark that the state on file for `fid` was rejected by the game."""
-    with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+    with db.connect(db.USERS) as conn:
         conn.execute("UPDATE users SET state_mismatch_at = ? WHERE fid = ?",
                      (datetime.now().isoformat(timespec='seconds'), fid))
         conn.commit()
@@ -414,7 +414,7 @@ def flag_state_mismatch(fid):
 def flag_state_mismatch_many(fids):
     """Mark the state on file for every fid as rejected by the game, in one transaction."""
     flagged_at = datetime.now().isoformat(timespec='seconds')
-    with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+    with db.connect(db.USERS) as conn:
         conn.executemany("UPDATE users SET state_mismatch_at = ? WHERE fid = ?",
                          [(flagged_at, fid) for fid in fids])
         conn.commit()
@@ -422,7 +422,7 @@ def flag_state_mismatch_many(fids):
 
 def scan_check(fid):
     """(needs a scan, the state the game rejected or None, alliance) for `fid`, in one read."""
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.USERS) as conn:
         row = conn.execute(
             f"SELECT {_NEEDS_SCAN}, CASE WHEN state_mismatch_at IS NOT NULL THEN kid END, alliance "
             f"FROM users WHERE fid = ?", (fid,)).fetchone()
@@ -431,13 +431,13 @@ def scan_check(fid):
 
 def clear_state_mismatch_many(fids):
     """Drop the wrong-state flag for every fid without touching the stored state, in one transaction."""
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn, conn:
+    with db.connect(db.USERS) as conn:
         conn.executemany("UPDATE users SET state_mismatch_at = NULL WHERE fid = ?", [(fid,) for fid in fids])
 
 
 def set_user_kid_many(fids, kid):
     """set_user_kid for every fid, in one transaction."""
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn, conn:
+    with db.connect(db.USERS) as conn:
         for fid in fids:
             set_user_kid(fid, kid, conn=conn)
 
@@ -445,7 +445,7 @@ def set_user_kid_many(fids, kid):
 
 def fids_with_state_mismatch():
     """[(fid, nickname, kid, alliance, flagged_at), ...] for members the game rejected."""
-    with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+    with db.connect(db.USERS) as conn:
         return conn.execute(
             "SELECT fid, nickname, kid, alliance, state_mismatch_at FROM users "
             "WHERE state_mismatch_at IS NOT NULL ORDER BY state_mismatch_at DESC"
@@ -454,7 +454,7 @@ def fids_with_state_mismatch():
 
 def fids_missing_state():
     """Members with no state on file (redemption can't run for them)."""
-    with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+    with db.connect(db.USERS) as conn:
         return [r[0] for r in conn.execute(
             "SELECT fid FROM users WHERE kid IS NULL AND alliance IS NOT NULL AND alliance != ''"
         ).fetchall()]
@@ -462,7 +462,7 @@ def fids_missing_state():
 
 def _alliance_bindings_by_str_id():
     """{str(alliance_id): kid} for every bound, non-multistate alliance."""
-    with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+    with db.connect(db.ALLIANCE) as conn:
         return {str(aid): kid for aid, kid in conn.execute(
             "SELECT alliance_id, kid FROM alliance_list "
             "WHERE kid IS NOT NULL AND COALESCE(multistate, 0) = 0").fetchall()}
@@ -474,7 +474,7 @@ def assign_alliance_kid_to_missing():
     bindings = _alliance_bindings_by_str_id()
     if not bindings:
         return []
-    with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+    with db.connect(db.USERS) as conn:
         rows = conn.execute(
             "SELECT fid, alliance FROM users WHERE kid IS NULL AND alliance IS NOT NULL AND alliance != ''"
         ).fetchall()
@@ -519,7 +519,7 @@ _NEEDS_SCAN = ("(kid IS NULL OR state_mismatch_at IS NOT NULL) "
 
 def _settings(*keys):
     """{key: value} for the keys that are set, read on one connection."""
-    with closing(sqlite3.connect('db/settings.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.SETTINGS) as conn:
         return dict(conn.execute(
             f"SELECT setting_key, setting_value FROM bot_global_settings "
             f"WHERE setting_key IN ({','.join('?' * len(keys))})", keys).fetchall())
@@ -530,16 +530,16 @@ def _setting(key):
 
 
 def _put_setting(key, value):
-    with closing(sqlite3.connect('db/settings.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.SETTINGS) as conn:
         conn.execute("INSERT OR REPLACE INTO bot_global_settings (setting_key, setting_value) "
                      "VALUES (?, ?)", (key, str(value)))
         conn.commit()
 
 
 def _highest_kid_on_file():
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.USERS) as conn:
         users_max = conn.execute("SELECT MAX(kid) FROM users").fetchone()[0] or 0
-    with closing(sqlite3.connect('db/alliance.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.ALLIANCE) as conn:
         alliance_max = conn.execute("SELECT MAX(kid) FROM alliance_list").fetchone()[0] or 0
     return max(int(users_max), int(alliance_max), 1)
 
@@ -563,7 +563,7 @@ def get_scan_settings():
 
 def clear_scan_range():
     """Back to the default range: 1 to the highest state on file."""
-    with closing(sqlite3.connect('db/settings.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.SETTINGS) as conn:
         conn.execute("DELETE FROM bot_global_settings WHERE setting_key IN "
                      "('kingdom_scan_min', 'kingdom_scan_max')")
         conn.commit()
@@ -589,7 +589,7 @@ def set_scan_range(lo, hi):
 def members_to_fix():
     """[(fid, nickname, kid, 'wrong'|'missing'), ...]: rejected states first, newest first."""
     wrong = [(fid, nick, kid, 'wrong') for fid, nick, kid, _a, _f in fids_with_state_mismatch()]
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.USERS) as conn:
         missing = [(fid, nick, None, 'missing') for fid, nick in conn.execute(
             "SELECT fid, nickname FROM users WHERE kid IS NULL AND alliance IS NOT NULL "
             "AND alliance != '' AND state_mismatch_at IS NULL ORDER BY nickname").fetchall()]
@@ -598,7 +598,7 @@ def members_to_fix():
 
 def member_fix_counts():
     """{'wrong', 'missing'}: the Members to Fix counts, without loading the rows."""
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.USERS) as conn:
         wrong, missing = conn.execute(
             "SELECT COALESCE(SUM(state_mismatch_at IS NOT NULL), 0), "
             "COALESCE(SUM(kid IS NULL AND alliance IS NOT NULL AND alliance != '' "
@@ -620,13 +620,13 @@ def scan_targets(*, auto, now=None):
     if auto:
         sql += f" AND {_AUTO_SCAN_DUE}"
         params = (_retry_cutoff(now),)
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.USERS) as conn:
         return [r[0] for r in conn.execute(sql + " ORDER BY fid", params).fetchall()]
 
 
 def scan_counts(now=None):
     """(waiting for auto-scan, needing any scan): the sizes of scan_targets(auto=True/False)."""
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.USERS) as conn:
         waiting, needing = conn.execute(
             f"SELECT COALESCE(SUM({_AUTO_SCAN_DUE}), 0), COUNT(*) FROM users WHERE {_NEEDS_SCAN}",
             (_retry_cutoff(now),)).fetchone()
@@ -634,13 +634,13 @@ def scan_counts(now=None):
 
 
 def needs_scan(fid):
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.USERS) as conn:
         return conn.execute(f"SELECT 1 FROM users WHERE fid = ? AND {_NEEDS_SCAN}",
                             (fid,)).fetchone() is not None
 
 
 def _write_scan(sql, params):
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.USERS) as conn:
         conn.execute(sql, params)
         conn.commit()
 
@@ -650,7 +650,7 @@ def save_scan_position(fid, next_kid):
 
 
 def get_scan_position(fid):
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.USERS) as conn:
         row = conn.execute("SELECT kingdom_scan_next FROM users WHERE fid = ?", (fid,)).fetchone()
     return row[0] if row else None
 

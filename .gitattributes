@@ -4,3 +4,4 @@ requirements-dev.txt export-ignore
 ruff.toml export-ignore
 .github/ export-ignore
 .gitlab-ci.yml export-ignore
+docs/ export-ignore

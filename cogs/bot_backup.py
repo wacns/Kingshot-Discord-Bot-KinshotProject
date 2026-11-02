@@ -4,7 +4,6 @@ Database backup and restore system. Manages scheduled and manual backups.
 import discord
 from discord.ext import commands, tasks
 import sqlite3
-from contextlib import closing
 import os
 import zipfile
 import datetime
@@ -14,6 +13,7 @@ import shutil
 import traceback
 import logging
 import asyncio
+from . import db
 from .permission_handler import PermissionManager
 from .pimp_my_bot import theme, menu_timeout, confirm_timeout
 from .bot_backup_import import show_import_menu
@@ -23,7 +23,7 @@ logger = logging.getLogger('bot')
 class BackupOperations(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db_path = "db/backup.sqlite"
+        self.db_path = db.BACKUP
         self.backup_dir = "backups"
         self.log_path = "log/backuplog.txt"
         os.makedirs("log", exist_ok=True)
@@ -40,10 +40,10 @@ class BackupOperations(commands.Cog):
 
     def setup_database(self):
         os.makedirs("db", exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with db.connect(self.db_path) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute('''
+            cursor.execute('''
             CREATE TABLE IF NOT EXISTS backup_passwords (
                 discord_id TEXT PRIMARY KEY,
                 backup_password TEXT NOT NULL,
@@ -51,7 +51,7 @@ class BackupOperations(commands.Cog):
             )
         ''')
 
-        cursor.execute('''
+            cursor.execute('''
             CREATE TABLE IF NOT EXISTS backup_settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 auto_enabled INTEGER NOT NULL DEFAULT 1,
@@ -61,15 +61,14 @@ class BackupOperations(commands.Cog):
                 last_auto_backup_at TEXT
             )
         ''')
-        cursor.execute('''
+            cursor.execute('''
             INSERT OR IGNORE INTO backup_settings (id) VALUES (1)
         ''')
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def get_settings(self) -> dict:
-        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+        with db.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM backup_settings WHERE id = 1").fetchone()
         if not row:
@@ -80,7 +79,7 @@ class BackupOperations(commands.Cog):
         if not kwargs:
             return
         cols = ", ".join(f"{k} = ?" for k in kwargs)
-        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+        with db.connect(self.db_path) as conn:
             conn.execute(
                 f"UPDATE backup_settings SET {cols} WHERE id = 1",
                 list(kwargs.values()),
@@ -179,10 +178,8 @@ class BackupOperations(commands.Cog):
                 except ValueError:
                     pass
 
-            with closing(sqlite3.connect("db/settings.sqlite")) as conn, conn:
-                global_admins = conn.execute(
-                    "SELECT id FROM admin WHERE is_initial = 1"
-                ).fetchall()
+            global_admins = await db.fetchall(
+                db.SETTINGS, "SELECT id FROM admin WHERE is_initial = 1")
 
             can_backup, reason = self.can_create_backup(save_locally=True)
             if not can_backup:
@@ -313,11 +310,10 @@ class BackupOperations(commands.Cog):
     async def create_backup(self, user_id: str, backup_type: str = "Manual", save_locally: bool = True):
         try:
             # Get password
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT backup_password FROM backup_passwords WHERE discord_id = ?", (user_id,))
-            password_result = cursor.fetchone()
-            conn.close()
+            with db.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT backup_password FROM backup_passwords WHERE discord_id = ?", (user_id,))
+                password_result = cursor.fetchone()
 
             backup_password = password_result[0] if password_result else None
 
@@ -899,23 +895,22 @@ class BackupPasswordModal(discord.ui.Modal, title="Set Backup Password"):
     async def on_submit(self, interaction: discord.Interaction):
         password_value = self.password.value.strip()
         
-        conn = sqlite3.connect(self.cog.db_path)
-        cursor = conn.cursor()
+        with db.connect(self.cog.db_path) as conn:
+            cursor = conn.cursor()
         
-        if password_value:
-            cursor.execute(
-                "INSERT OR REPLACE INTO backup_passwords (discord_id, backup_password) VALUES (?, ?)",
-                (str(interaction.user.id), password_value)
-            )
-            message = "Your backup password has been saved successfully!"
-            title = f"{theme.verifiedIcon} Password Set"
-        else:
-            cursor.execute("DELETE FROM backup_passwords WHERE discord_id = ?", (str(interaction.user.id),))
-            message = "Your backup password has been removed. Future backups will not be encrypted."
-            title = f"{theme.verifiedIcon} Password Removed"
+            if password_value:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO backup_passwords (discord_id, backup_password) VALUES (?, ?)",
+                    (str(interaction.user.id), password_value)
+                )
+                message = "Your backup password has been saved successfully!"
+                title = f"{theme.verifiedIcon} Password Set"
+            else:
+                cursor.execute("DELETE FROM backup_passwords WHERE discord_id = ?", (str(interaction.user.id),))
+                message = "Your backup password has been removed. Future backups will not be encrypted."
+                title = f"{theme.verifiedIcon} Password Removed"
         
-        conn.commit()
-        conn.close()
+            conn.commit()
 
         embed = discord.Embed(
             title=title,

@@ -3,7 +3,6 @@ Notification templates. Provides reusable event presets for quick setup.
 """
 import discord
 from discord.ext import commands
-import sqlite3
 import json
 import os
 import logging
@@ -18,6 +17,7 @@ from notification_event_types import (
 )
 from .pimp_my_bot import theme, menu_timeout, confirm_timeout
 from .permission_handler import PermissionManager
+from . import db
 
 logger = logging.getLogger('notification')
 
@@ -61,16 +61,11 @@ def build_default_repeat_config(event_name: str, config: Dict) -> str:
 class NotificationTemplates(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db_path = 'db/beartime.sqlite'
+        self.db_path = db.BEARTIME
         os.makedirs('db', exist_ok=True)
 
-        self.conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+        self.conn = db.connect_persistent(self.db_path)
         self.cursor = self.conn.cursor()
-
-        # Enable WAL mode
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=NORMAL")
-        self.conn.commit()
 
         self._setup_database()
 

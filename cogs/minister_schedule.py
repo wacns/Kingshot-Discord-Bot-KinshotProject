@@ -5,9 +5,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import asyncio
-import sqlite3
 import logging
 from datetime import datetime
+from . import db
 from .pimp_my_bot import theme, menu_timeout
 from .alliance_member_edit import log_avatar_url
 from .permission_handler import PermissionManager
@@ -45,97 +45,97 @@ class ChannelSelect(discord.ui.ChannelSelect):
         selected_channel = self.values[0]
         channel_id = selected_channel.id
 
-        svs_conn = sqlite3.connect("db/svs.sqlite")
-        svs_cursor = svs_conn.cursor()
         try:
-            # Check if we're updating a minister channel
-            if self.context.endswith("channel"):
-                # Get the activity name from the context (e.g., "Construction Day channel" -> "Construction Day")
-                activity_name = self.context.replace(" channel", "")
+            with db.connect(db.SVS) as svs_conn:
+                svs_cursor = svs_conn.cursor()
+                # Check if we're updating a minister channel
+                if self.context.endswith("channel"):
+                    # Get the activity name from the context (e.g., "Construction Day channel" -> "Construction Day")
+                    activity_name = self.context.replace(" channel", "")
                 
-                # Check if this is one of the minister activity channels
-                if activity_name in ["Construction Day", "Research Day", "Troops Training Day"]:
-                    # Get the old channel ID if it exists
-                    svs_cursor.execute("SELECT context_id FROM reference WHERE context=?", (self.context,))
-                    old_channel_row = svs_cursor.fetchone()
+                    # Check if this is one of the minister activity channels
+                    if activity_name in ["Construction Day", "Research Day", "Troops Training Day"]:
+                        # Get the old channel ID if it exists
+                        svs_cursor.execute("SELECT context_id FROM reference WHERE context=?", (self.context,))
+                        old_channel_row = svs_cursor.fetchone()
                     
-                    if old_channel_row:
-                        old_channel_id = int(old_channel_row[0])
-                        # Get the message ID for this activity
-                        svs_cursor.execute("SELECT context_id FROM reference WHERE context=?", (activity_name,))
-                        message_row = svs_cursor.fetchone()
+                        if old_channel_row:
+                            old_channel_id = int(old_channel_row[0])
+                            # Get the message ID for this activity
+                            svs_cursor.execute("SELECT context_id FROM reference WHERE context=?", (activity_name,))
+                            message_row = svs_cursor.fetchone()
                         
-                        if message_row and old_channel_id != channel_id:
-                            # Delete the old message if channel has changed
-                            message_id = int(message_row[0])
-                            guild = interaction.guild
-                            if guild:
-                                old_channel = guild.get_channel(old_channel_id)
-                                if old_channel:
-                                    try:
-                                        old_message = await old_channel.fetch_message(message_id)
-                                        await old_message.delete()
-                                    except Exception:
-                                        pass  # Message might already be deleted
+                            if message_row and old_channel_id != channel_id:
+                                # Delete the old message if channel has changed
+                                message_id = int(message_row[0])
+                                guild = interaction.guild
+                                if guild:
+                                    old_channel = guild.get_channel(old_channel_id)
+                                    if old_channel:
+                                        try:
+                                            old_message = await old_channel.fetch_message(message_id)
+                                            await old_message.delete()
+                                        except Exception:
+                                            pass  # Message might already be deleted
                             
-                            # Remove the message reference so it will be recreated in the new channel
-                            svs_cursor.execute("DELETE FROM reference WHERE context=?", (activity_name,))
+                                # Remove the message reference so it will be recreated in the new channel
+                                svs_cursor.execute("DELETE FROM reference WHERE context=?", (activity_name,))
             
-            # Update the channel reference
-            svs_cursor.execute("""
+                # Update the channel reference
+                svs_cursor.execute("""
                 INSERT INTO reference (context, context_id)
                 VALUES (?, ?)
                 ON CONFLICT(context) DO UPDATE SET context_id = excluded.context_id;
             """, (self.context, channel_id))
-            svs_conn.commit()
+                svs_conn.commit()
             
-            # Trigger message update in the new channel
-            if self.context.endswith("channel"):
-                activity_name = self.context.replace(" channel", "")
-                if activity_name in ["Construction Day", "Research Day", "Troops Training Day"]:
-                    minister_menu_cog = self.bot.get_cog("MinisterMenu")
-                    if minister_menu_cog:
-                        await minister_menu_cog.update_channel_message(activity_name)
+                # Trigger message update in the new channel
+                if self.context.endswith("channel"):
+                    activity_name = self.context.replace(" channel", "")
+                    if activity_name in ["Construction Day", "Research Day", "Troops Training Day"]:
+                        minister_menu_cog = self.bot.get_cog("MinisterMenu")
+                        if minister_menu_cog:
+                            await minister_menu_cog.update_channel_message(activity_name)
 
-            # Check if this is being called from the minister menu system
-            minister_menu_cog = self.bot.get_cog("MinisterMenu")
-            if minister_menu_cog and self.context.endswith("channel"):
-                # Return to channel configuration menu with confirmation
-                embed = discord.Embed(
-                    title=f"{theme.editListIcon} Channel Setup",
-                    description=(
-                        f"{theme.verifiedIcon} **{self.context}** set to <#{channel_id}>\n\n"
-                        f"Configure channels for minister scheduling:\n\n"
-                        f"**Channel Types**\n"
-                        f"{theme.upperDivider}\n"
-                        f"{theme.settingsIcon} **Construction Channel** - Shows available Construction Day slots\n"
-                        f"{theme.searchIcon} **Research Channel** - Shows available Research Day slots\n"
-                        f"{theme.allianceIcon} **Training Channel** - Shows available Training Day slots\n"
-                        f"{theme.documentIcon} **Log Channel** - Receives add/remove notifications\n"
-                        f"{theme.lowerDivider}\n\n"
-                        f"Select a channel type to configure:"
-                    ),
-                    color=theme.emColor3
-                )
+                # Check if this is being called from the minister menu system
+                minister_menu_cog = self.bot.get_cog("MinisterMenu")
+                if minister_menu_cog and self.context.endswith("channel"):
+                    # Return to channel configuration menu with confirmation
+                    embed = discord.Embed(
+                        title=f"{theme.editListIcon} Channel Setup",
+                        description=(
+                            f"{theme.verifiedIcon} **{self.context}** set to <#{channel_id}>\n\n"
+                            f"Configure channels for minister scheduling:\n\n"
+                            f"**Channel Types**\n"
+                            f"{theme.upperDivider}\n"
+                            f"{theme.settingsIcon} **Construction Channel** - Shows available Construction Day slots\n"
+                            f"{theme.searchIcon} **Research Channel** - Shows available Research Day slots\n"
+                            f"{theme.allianceIcon} **Training Channel** - Shows available Training Day slots\n"
+                            f"{theme.documentIcon} **Log Channel** - Receives add/remove notifications\n"
+                            f"{theme.lowerDivider}\n\n"
+                            f"Select a channel type to configure:"
+                        ),
+                        color=theme.emColor3
+                    )
 
-                # Get the ChannelConfigurationView from minister_menu
-                import sys
-                minister_menu_module = minister_menu_cog.__class__.__module__
-                ChannelConfigurationView = sys.modules[minister_menu_module].ChannelConfigurationView
+                    # Get the ChannelConfigurationView from minister_menu
+                    import sys
+                    minister_menu_module = minister_menu_cog.__class__.__module__
+                    ChannelConfigurationView = sys.modules[minister_menu_module].ChannelConfigurationView
                 
-                view = ChannelConfigurationView(self.bot, minister_menu_cog)
+                    view = ChannelConfigurationView(self.bot, minister_menu_cog)
                 
-                await interaction.response.edit_message(
-                    content=None, # Clear the "Select a channel for..." content
-                    embed=embed,
-                    view=view
-                )
-            else:
-                # Fallback for other contexts
-                await interaction.response.edit_message(
-                    content=f"{theme.verifiedIcon} `{self.context}` set to <#{channel_id}>.\n\nChannel configured successfully!",
-                    view=None
-                )
+                    await interaction.response.edit_message(
+                        content=None, # Clear the "Select a channel for..." content
+                        embed=embed,
+                        view=view
+                    )
+                else:
+                    # Fallback for other contexts
+                    await interaction.response.edit_message(
+                        content=f"{theme.verifiedIcon} `{self.context}` set to <#{channel_id}>.\n\nChannel configured successfully!",
+                        view=None
+                    )
 
         except Exception as e:
             try:
@@ -148,30 +148,18 @@ class ChannelSelect(discord.ui.ChannelSelect):
                     f"{theme.deniedIcon} Failed to update:\n```{e}```",
                     ephemeral=True
                 )
-        finally:
-            svs_conn.close()
 
 class MinisterSchedule(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.users_conn = sqlite3.connect('db/users.sqlite', timeout=30.0, check_same_thread=False)
+        self.users_conn = db.connect_persistent(db.USERS)
         self.users_cursor = self.users_conn.cursor()
-        self.settings_conn = sqlite3.connect('db/settings.sqlite', timeout=30.0, check_same_thread=False)
+        self.settings_conn = db.connect_persistent(db.SETTINGS)
         self.settings_cursor = self.settings_conn.cursor()
-        self.alliance_conn = sqlite3.connect('db/alliance.sqlite', timeout=30.0, check_same_thread=False)
+        self.alliance_conn = db.connect_persistent(db.ALLIANCE)
         self.alliance_cursor = self.alliance_conn.cursor()
-        self.svs_conn = sqlite3.connect("db/svs.sqlite", timeout=30.0, check_same_thread=False)
+        self.svs_conn = db.connect_persistent(db.SVS)
         self.svs_cursor = self.svs_conn.cursor()
-
-        # Enable WAL mode for better concurrent access
-        self.users_conn.execute("PRAGMA journal_mode=WAL")
-        self.users_conn.execute("PRAGMA synchronous=NORMAL")
-        self.settings_conn.execute("PRAGMA journal_mode=WAL")
-        self.settings_conn.execute("PRAGMA synchronous=NORMAL")
-        self.alliance_conn.execute("PRAGMA journal_mode=WAL")
-        self.alliance_conn.execute("PRAGMA synchronous=NORMAL")
-        self.svs_conn.execute("PRAGMA journal_mode=WAL")
-        self.svs_conn.execute("PRAGMA synchronous=NORMAL")
 
         self.svs_cursor.execute("""
                     CREATE TABLE IF NOT EXISTS appointments (

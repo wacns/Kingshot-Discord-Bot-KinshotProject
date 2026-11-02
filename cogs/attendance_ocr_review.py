@@ -7,13 +7,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import sqlite3
-from contextlib import closing
 from datetime import datetime, timezone
 from typing import Optional
 
 import discord
 
+from . import db
 from .pimp_my_bot import theme, menu_timeout, confirm_timeout, safe_edit_message
 from .attendance_ocr_parsers import can_edit_session
 from .bear_track import _isolate_rtl, _ltr_line
@@ -643,7 +642,7 @@ class EventReviewView(discord.ui.View):
         if not self.session.detected_date:
             return 0
         present_fids = {r["fid"] for r in self.result_rows if r["fid"]}
-        with sqlite3.connect("db/attendance.sqlite", timeout=30.0) as conn:
+        with db.connect(db.ATTENDANCE) as conn:
             rows = conn.execute(
                 "SELECT DISTINCT player_id FROM attendance_records ar "
                 "JOIN attendance_sessions s ON ar.session_id = s.session_id "
@@ -1071,7 +1070,7 @@ class EventReviewView(discord.ui.View):
 
         if self.existing_session_id is not None:
             session_id = self.existing_session_id
-            with sqlite3.connect("db/attendance.sqlite", timeout=30.0) as conn:
+            with db.connect(db.ATTENDANCE) as conn:
                 conn.execute(
                     "UPDATE attendance_sessions SET awaiting_result = 1 "
                     "WHERE session_id = ?", (session_id,))
@@ -1091,7 +1090,7 @@ class EventReviewView(discord.ui.View):
                 date_confidence=self.session.date_confidence,
             )
 
-        with sqlite3.connect("db/attendance.sqlite", timeout=30.0) as conn:
+        with db.connect(db.ATTENDANCE) as conn:
             conn.execute(
                 "UPDATE attendance_sessions "
                 "SET alliance_rank = ?, event_time = ? WHERE session_id = ?",
@@ -1185,7 +1184,7 @@ class EventReviewView(discord.ui.View):
                 date_confidence=self.session.date_confidence,
             )
         self._write_registered_rows(session_id, update_fn, ts)
-        with sqlite3.connect("db/attendance.sqlite", timeout=30.0) as conn:
+        with db.connect(db.ATTENDANCE) as conn:
             conn.execute(
                 "UPDATE attendance_sessions "
                 "SET alliance_rank = ?, event_time = ? WHERE session_id = ?",
@@ -1201,7 +1200,7 @@ class EventReviewView(discord.ui.View):
         """Wipe + reinsert registered rows; return normalized-name → placeholder
         negative-fids for unmatched reg rows, so the result pass can fold
         unmatched results onto the same row by name."""
-        with sqlite3.connect("db/attendance.sqlite", timeout=30.0) as conn:
+        with db.connect(db.ATTENDANCE) as conn:
             conn.execute(
                 "DELETE FROM attendance_records WHERE session_id = ? AND status = 'registered'",
                 (session_id,),
@@ -1234,7 +1233,7 @@ class EventReviewView(discord.ui.View):
         return name_to_neg
 
     def _own_alliance_name(self) -> Optional[str]:
-        with sqlite3.connect("db/alliance.sqlite", timeout=30.0) as conn:
+        with db.connect(db.ALLIANCE) as conn:
             row = conn.execute(
                 "SELECT name FROM alliance_list WHERE alliance_id = ?",
                 (self.session.alliance_id,),
@@ -1299,7 +1298,7 @@ class EventReviewView(discord.ui.View):
     # ── scoreboard embed ──────────────────────────────────────────────────
 
     def _previous_event_total(self, session_id: str) -> Optional[int]:
-        with sqlite3.connect("db/attendance.sqlite", timeout=30.0) as conn:
+        with db.connect(db.ATTENDANCE) as conn:
             prior = conn.execute(
                 "SELECT session_id FROM attendance_sessions "
                 "WHERE event_type = ? AND alliance_id = ? "
@@ -1631,7 +1630,7 @@ async def _resolve_player_field(interaction: discord.Interaction,
 async def _add_unknown_fid(interaction, view, fid, new_name=None):
     """Add a kingdom-checked unknown fid under `new_name` -> (added, nickname, note); never moves other alliances' players."""
     alliance_id = view.session.alliance_id
-    with sqlite3.connect("db/users.sqlite", timeout=30.0) as conn:
+    with db.connect(db.USERS) as conn:
         row = conn.execute("SELECT alliance FROM users WHERE fid = ?", (fid,)).fetchone()
     if row is not None:
         if str(row[0]) == str(alliance_id):
@@ -1648,7 +1647,7 @@ async def _add_unknown_fid(interaction, view, fid, new_name=None):
 
 
 def _insert_member(fid, member, alliance_id):
-    with closing(sqlite3.connect("db/users.sqlite", timeout=30.0)) as conn:
+    with db.connect(db.USERS) as conn:
         conn.execute(
             "INSERT INTO users (fid, nickname, furnace_lv, kid, stove_lv_content, alliance) "
             "VALUES (?, ?, ?, ?, '', ?)",

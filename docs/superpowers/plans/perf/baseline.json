@@ -1,0 +1,192 @@
+{
+  "python": "C:\\Users\\ABU-LAYLA\\AppData\\Local\\Temp\\claude\\C--Users-ABU-LAYLA-PycharmProjects-Kingshot-Discord-Bot-KinshotProject\\bb0e5a14-7444-461d-b394-7b5f96c5175b\\scratchpad\\venv\\Scripts\\python.exe",
+  "runs_per_file": 7,
+  "command": "<python> -m pytest <file> -q -p no:cacheprovider",
+  "files": {
+    "tests/test_gift_redeem_accounting.py": {
+      "runs": [
+        0.19,
+        0.22,
+        0.21,
+        0.17,
+        0.18,
+        0.24,
+        0.2
+      ],
+      "min": 0.17,
+      "passed": 9,
+      "failed": 0,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "pass_counts_consistent": true,
+      "summaries": [
+        "9 passed, 1 warning in 0.17s",
+        "9 passed, 1 warning in 0.18s",
+        "9 passed, 1 warning in 0.19s",
+        "9 passed, 1 warning in 0.20s",
+        "9 passed, 1 warning in 0.21s",
+        "9 passed, 1 warning in 0.22s",
+        "9 passed, 1 warning in 0.24s"
+      ]
+    },
+    "tests/test_gift_redeem_resume.py": {
+      "runs": [
+        0.18,
+        0.17,
+        0.18,
+        0.18,
+        0.17,
+        0.16,
+        0.18
+      ],
+      "min": 0.16,
+      "passed": 3,
+      "failed": 0,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "pass_counts_consistent": true,
+      "summaries": [
+        "3 passed, 1 warning in 0.16s",
+        "3 passed, 1 warning in 0.17s",
+        "3 passed, 1 warning in 0.18s"
+      ]
+    },
+    "tests/test_process_queue_reload.py": {
+      "runs": [
+        0.14,
+        0.14,
+        0.16,
+        0.17,
+        0.15,
+        0.19,
+        0.15
+      ],
+      "min": 0.14,
+      "passed": 2,
+      "failed": 0,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "pass_counts_consistent": true,
+      "summaries": [
+        "2 passed, 1 warning in 0.14s",
+        "2 passed, 1 warning in 0.15s",
+        "2 passed, 1 warning in 0.16s",
+        "2 passed, 1 warning in 0.17s",
+        "2 passed, 1 warning in 0.19s"
+      ]
+    },
+    "tests/test_bear_persist_no_deadlock.py": {
+      "runs": [
+        1.36,
+        1.4,
+        1.36,
+        1.35,
+        1.4,
+        1.4,
+        1.29
+      ],
+      "min": 1.29,
+      "passed": 1,
+      "failed": 0,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "pass_counts_consistent": true,
+      "summaries": [
+        "1 passed, 1 warning in 1.29s",
+        "1 passed, 1 warning in 1.35s",
+        "1 passed, 1 warning in 1.36s",
+        "1 passed, 1 warning in 1.40s"
+      ]
+    },
+    "tests/test_minister_booking.py": {
+      "runs": [
+        1.84,
+        1.79,
+        1.95,
+        1.95,
+        1.91,
+        1.98,
+        2.09
+      ],
+      "min": 1.79,
+      "passed": 11,
+      "failed": 0,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "pass_counts_consistent": true,
+      "summaries": [
+        "11 passed, 1 warning in 1.79s",
+        "11 passed, 1 warning in 1.84s",
+        "11 passed, 1 warning in 1.91s",
+        "11 passed, 1 warning in 1.95s",
+        "11 passed, 1 warning in 1.98s",
+        "11 passed, 1 warning in 2.09s"
+      ]
+    },
+    "tests/test_notification_fire_path.py": {
+      "runs": [
+        0.17,
+        0.16,
+        0.16,
+        0.16,
+        0.14,
+        0.14,
+        0.15
+      ],
+      "min": 0.14,
+      "passed": 11,
+      "failed": 0,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "pass_counts_consistent": true,
+      "summaries": [
+        "11 passed, 1 warning in 0.14s",
+        "11 passed, 1 warning in 0.15s",
+        "11 passed, 1 warning in 0.16s",
+        "11 passed, 1 warning in 0.17s"
+      ]
+    }
+  }
+}

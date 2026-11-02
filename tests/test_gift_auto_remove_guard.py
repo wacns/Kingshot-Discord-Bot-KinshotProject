@@ -13,6 +13,20 @@ import cogs.gift_redemption as gr
 from harness import fake_player_api
 
 
+
+class _KeepOpen:
+    """Hands a shared in-memory connection to code that closes its connection."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def close(self):
+        pass
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
 def _harness(monkeypatch, roster_size, settings_rows=((5, 1),)):
     users = sqlite3.connect(":memory:", check_same_thread=False)
     users.execute("CREATE TABLE users (fid INTEGER, nickname TEXT, alliance TEXT)")
@@ -31,7 +45,8 @@ def _harness(monkeypatch, roster_size, settings_rows=((5, 1),)):
     settings.commit()
 
     real_connect = sqlite3.connect
-    routes = {"db/users.sqlite": users, "db/alliance.sqlite": alliance, "db/settings.sqlite": settings}
+    routes = {"db/users.sqlite": _KeepOpen(users), "db/alliance.sqlite": _KeepOpen(alliance),
+              "db/settings.sqlite": _KeepOpen(settings)}
 
     def fake_connect(path, *a, **k):
         conn = routes.get(str(path))

@@ -1,5 +1,12 @@
-"""Fixtures for the SimCord UI suite. Run with: pytest tests/sim --sim"""
+"""Fixtures for the SimCord UI suite. Run with: pytest tests/sim --sim
+
+Set KSBOT_SIM_SEED_DB=<folder> to copy an existing db/ folder (say, one an older release made)
+into each test's folder first. It must not already hold the rows the populated scenario seeds
+(alliance 1, members 10001-10003, the admins), and some tests count alliances and members, so
+extra rows belong to an alliance id no alliance row has."""
 import logging
+import os
+import shutil
 import socket
 
 import pytest
@@ -62,6 +69,9 @@ def _sim_fixture(scenario, **options):
     @pytest_asyncio.fixture
     async def fixture(tmp_path, monkeypatch, logged_errors):
         monkeypatch.chdir(tmp_path)
+        seed_db = os.environ.get("KSBOT_SIM_SEED_DB")
+        if seed_db:  # opt-in: start from an existing db/ folder (e.g. one an older release made)
+            shutil.copytree(seed_db, tmp_path / "db")
         async with sim_harness.running(scenario, **options) as sim:
             sim.logged_errors = logged_errors
             yield sim

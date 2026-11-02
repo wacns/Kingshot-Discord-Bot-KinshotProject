@@ -8,6 +8,7 @@ from datetime import datetime
 import logging
 import sqlite3
 import asyncio
+from . import db
 from .permission_handler import (
     PermissionManager, TIER_OWNER, TIER_GLOBAL, TIER_SERVER, TIER_ALLIANCE, TIER_NONE,
 )
@@ -201,9 +202,9 @@ class MainMenu(commands.Cog):
     @staticmethod
     def _member_counts() -> dict:
         """{str(alliance_id): member_count} for all alliances, in one query."""
-        with sqlite3.connect('db/users.sqlite') as db:
+        with db.connect(db.USERS) as conn:
             return {
-                str(a): c for a, c in db.execute(
+                str(a): c for a, c in conn.execute(
                     "SELECT alliance, COUNT(*) FROM users GROUP BY alliance"
                 ).fetchall()
             }
@@ -245,7 +246,7 @@ class MainMenu(commands.Cog):
             if visible_ids:
                 placeholders = ",".join("?" * len(visible_ids))
                 try:
-                    with sqlite3.connect('db/users.sqlite', timeout=30.0) as udb:
+                    with db.connect(db.USERS) as udb:
                         needs_state = udb.execute(
                             f"SELECT COUNT(*) FROM users WHERE alliance IN ({placeholders}) "
                             f"AND (kid IS NULL OR state_mismatch_at IS NOT NULL)",
@@ -318,8 +319,8 @@ class MainMenu(commands.Cog):
         try:
             if await _deny_alliance_access(interaction, alliance_id):
                 return
-            with sqlite3.connect('db/alliance.sqlite') as db:
-                cursor = db.cursor()
+            with db.connect(db.ALLIANCE) as conn:
+                cursor = conn.cursor()
                 cursor.execute(
                     "SELECT name, kid, COALESCE(state_locked, 0), COALESCE(multistate, 0) "
                     "FROM alliance_list WHERE alliance_id = ?",
@@ -334,8 +335,8 @@ class MainMenu(commands.Cog):
                 return
             alliance_name, alliance_kid, state_locked, multistate = row
 
-            with sqlite3.connect('db/alliance.sqlite') as db:
-                cursor = db.cursor()
+            with db.connect(db.ALLIANCE) as conn:
+                cursor = conn.cursor()
                 cursor.execute(
                     "SELECT COALESCE(auto_remove_on_transfer, 0) FROM alliancesettings WHERE alliance_id = ?",
                     (alliance_id,),
@@ -343,8 +344,8 @@ class MainMenu(commands.Cog):
                 arow = cursor.fetchone()
             auto_remove = bool(arow[0]) if arow else False
 
-            with sqlite3.connect('db/users.sqlite') as db:
-                cursor = db.cursor()
+            with db.connect(db.USERS) as conn:
+                cursor = conn.cursor()
                 cursor.execute(
                     "SELECT COUNT(*), AVG(furnace_lv), MAX(furnace_lv) "
                     "FROM users WHERE alliance = ?",
@@ -944,7 +945,7 @@ class AllianceHubView(discord.ui.View):
             return
         new_val = 0 if self.state_locked else 1
         try:
-            with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+            with db.connect(db.ALLIANCE) as conn:
                 conn.execute(
                     "UPDATE alliance_list SET state_locked = ? WHERE alliance_id = ?",
                     (new_val, self.alliance_id),
@@ -973,7 +974,7 @@ class AllianceHubView(discord.ui.View):
     async def _on_auto_remove_toggle(self, interaction: discord.Interaction):
         new_val = 0 if self.auto_remove else 1
         try:
-            with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+            with db.connect(db.ALLIANCE) as conn:
                 conn.execute(
                     "INSERT OR IGNORE INTO alliancesettings (alliance_id) VALUES (?)",
                     (self.alliance_id,),
@@ -1265,13 +1266,13 @@ class SelfRegistrationView(discord.ui.View):
         settings = self._get_settings(interaction.guild_id)
         new_value = 0 if settings.get("scan_enabled", 1) else 1
         id_cog.ensure_guild_settings(interaction.guild_id)
-        with sqlite3.connect('db/id_channel.sqlite') as db:
-            cursor = db.cursor()
+        with db.connect(db.ID_CHANNEL) as conn:
+            cursor = conn.cursor()
             cursor.execute(
                 "UPDATE id_channel_settings SET scan_enabled = ? WHERE guild_id = ?",
                 (new_value, interaction.guild_id),
             )
-            db.commit()
+            conn.commit()
         await self.show(interaction)
 
     async def _toggle_respond(self, interaction: discord.Interaction):
@@ -1285,13 +1286,13 @@ class SelfRegistrationView(discord.ui.View):
         settings = self._get_settings(interaction.guild_id)
         new_value = 0 if settings.get("respond_to_invalid", 0) else 1
         id_cog.ensure_guild_settings(interaction.guild_id)
-        with sqlite3.connect('db/id_channel.sqlite') as db:
-            cursor = db.cursor()
+        with db.connect(db.ID_CHANNEL) as conn:
+            cursor = conn.cursor()
             cursor.execute(
                 "UPDATE id_channel_settings SET respond_to_invalid = ? WHERE guild_id = ?",
                 (new_value, interaction.guild_id),
             )
-            db.commit()
+            conn.commit()
         await self.show(interaction)
 
     async def _edit_scan_limit(self, interaction: discord.Interaction):
@@ -2800,7 +2801,7 @@ class ExternalOcrModal(discord.ui.Modal):
         url = self.url_input.value.strip().rstrip("/")
         try:
             from .bear_track import invalidate_remote_ocr_cache
-            with sqlite3.connect("db/settings.sqlite", timeout=30.0) as conn:
+            with db.connect(db.SETTINGS) as conn:
                 conn.execute(
                     "INSERT INTO bot_global_settings (setting_key, setting_value) VALUES (?, ?) "
                     "ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value",

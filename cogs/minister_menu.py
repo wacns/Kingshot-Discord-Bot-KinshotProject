@@ -4,9 +4,8 @@ Minister scheduling menu. UI for managing state minister appointments and rotati
 import asyncio
 import discord
 from discord.ext import commands
-import sqlite3
 import logging
-from contextlib import closing
+from . import db
 from .permission_handler import PermissionManager
 from .pimp_my_bot import theme, safe_edit_message, menu_timeout, confirm_timeout, check_interaction_user
 from .alliance_api_sync import syncs_names
@@ -502,7 +501,7 @@ class MinisterSettingsView(discord.ui.View):
             return
         
         try:
-            with closing(sqlite3.connect("db/svs.sqlite")) as svs_conn:
+            with db.connect(db.SVS) as svs_conn:
                 svs_cursor = svs_conn.cursor()
                 svs_cursor.execute("DELETE FROM reference WHERE context=?", ("minister guild id",))
                 svs_conn.commit()
@@ -838,11 +837,11 @@ class TimeSelect(discord.ui.Select):
 class MinisterMenu(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.users_conn = sqlite3.connect('db/users.sqlite', timeout=30.0, check_same_thread=False)
+        self.users_conn = db.connect_persistent(db.USERS)
         self.users_cursor = self.users_conn.cursor()
-        self.alliance_conn = sqlite3.connect('db/alliance.sqlite', timeout=30.0, check_same_thread=False)
+        self.alliance_conn = db.connect_persistent(db.ALLIANCE)
         self.alliance_cursor = self.alliance_conn.cursor()
-        self.svs_conn = sqlite3.connect("db/svs.sqlite", timeout=30.0, check_same_thread=False)
+        self.svs_conn = db.connect_persistent(db.SVS)
         self.svs_cursor = self.svs_conn.cursor()
 
     async def cog_unload(self):
@@ -1449,7 +1448,7 @@ class MinisterMenu(commands.Cog):
                     await interaction.response.defer()
                     
                     cleared_channels = []
-                    with closing(sqlite3.connect("db/svs.sqlite")) as svs_conn:
+                    with db.connect(db.SVS) as svs_conn:
                         svs_cursor = svs_conn.cursor()
 
                         for value in select.values:

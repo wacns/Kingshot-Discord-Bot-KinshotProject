@@ -9,14 +9,15 @@ from datetime import datetime
 
 import discord
 
+from . import db
 from .pimp_my_bot import theme, menu_timeout
 from .attendance_ocr_parsers import EVENT_TYPES
 from .bear_track import _isolate_rtl, _ltr_line
 
 logger = logging.getLogger(__name__)
 
-ATTENDANCE_DB = "db/attendance.sqlite"
-USERS_DB = "db/users.sqlite"
+ATTENDANCE_DB = db.ATTENDANCE
+USERS_DB = db.USERS
 
 # Status -> (icon, label). Mirrors the review legend.
 _STATUS = {
@@ -81,7 +82,7 @@ def history_players(alliance_id: int) -> list[dict]:
     (lookup by ID, so former/transferred members are included). Returns dicts
     sorted by most-recent activity: {fid, nickname, current, events, last}."""
     try:
-        with sqlite3.connect(ATTENDANCE_DB, timeout=30.0) as conn:
+        with db.connect(ATTENDANCE_DB) as conn:
             rows = conn.execute(
                 "SELECT player_id, COUNT(*), MAX(event_date), MAX(player_name) "
                 "FROM attendance_records "
@@ -98,7 +99,7 @@ def history_players(alliance_id: int) -> list[dict]:
     nick_by_fid: dict[int, str] = {}
     current: set[int] = set()
     try:
-        with sqlite3.connect(USERS_DB, timeout=30.0) as conn:
+        with db.connect(USERS_DB) as conn:
             placeholders = ",".join("?" * len(fids))
             for fid, nick, alliance in conn.execute(
                 f"SELECT fid, nickname, alliance FROM users WHERE fid IN ({placeholders})",
@@ -126,7 +127,7 @@ def history_players(alliance_id: int) -> list[dict]:
 
 def player_timeline(alliance_id: int, fid: int) -> list[dict]:
     try:
-        with sqlite3.connect(ATTENDANCE_DB, timeout=30.0) as conn:
+        with db.connect(ATTENDANCE_DB) as conn:
             rows = conn.execute(
                 "SELECT event_type, event_date, event_subtype, status, points, "
                 "alliance_rank, player_name, session_name FROM attendance_records "
@@ -149,7 +150,7 @@ def player_power(fid: int) -> dict:
     out = {"nickname": None, "alliance": None, "power": None, "power_at": None,
            "combat_power": None, "combat_power_at": None}
     try:
-        with sqlite3.connect(USERS_DB, timeout=30.0) as conn:
+        with db.connect(USERS_DB) as conn:
             row = conn.execute(
                 "SELECT nickname, alliance, power, power_updated_at, combat_power, "
                 "combat_power_updated_at FROM users WHERE fid = ?",

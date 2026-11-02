@@ -4,9 +4,9 @@ import discord
 import sqlite3
 import asyncio
 import logging
-from contextlib import closing
 from datetime import datetime
 
+from . import db
 from .pimp_my_bot import theme, check_interaction_user, menu_timeout, confirm_timeout
 from .alliance_member_operations import AllianceSelectView
 from .permission_handler import PermissionManager
@@ -128,7 +128,7 @@ async def list_gift_codes(cog, interaction: discord.Interaction):
 
 async def delete_gift_code(cog, interaction: discord.Interaction):
     try:
-        with closing(sqlite3.connect('db/settings.sqlite')) as settings_conn:
+        with db.connect(db.SETTINGS) as settings_conn:
             settings_cursor = settings_conn.cursor()
 
             settings_cursor.execute("""
@@ -604,7 +604,7 @@ class GiftView(discord.ui.View):
 
             alliances_with_counts = []
             for alliance_id, name in available_alliances:
-                with sqlite3.connect('db/users.sqlite') as users_db:
+                with db.connect(db.USERS) as users_db:
                     cursor = users_db.cursor()
                     cursor.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,))
                     member_count = cursor.fetchone()[0]

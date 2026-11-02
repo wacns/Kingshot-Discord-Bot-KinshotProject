@@ -6,10 +6,10 @@ from discord.ext import commands
 import os
 import re
 import sys
-import sqlite3
 import asyncio
 import requests
 import logging
+from . import db
 from .permission_handler import PermissionManager
 from .pimp_my_bot import theme, safe_edit_message, menu_timeout, use_guild_theme
 
@@ -53,9 +53,9 @@ class BotOperations(commands.Cog):
     def __init__(self, bot, conn):
         self.bot = bot
         self.conn = conn
-        self.settings_db = sqlite3.connect('db/settings.sqlite', timeout=30.0, check_same_thread=False)
+        self.settings_db = db.connect_persistent(db.SETTINGS)
         self.settings_cursor = self.settings_db.cursor()
-        self.alliance_db = sqlite3.connect('db/alliance.sqlite', timeout=30.0, check_same_thread=False)
+        self.alliance_db = db.connect_persistent(db.ALLIANCE)
         self.c_alliance = self.alliance_db.cursor()
         self.setup_database()
 
@@ -663,4 +663,4 @@ class BotPresenceTextModal(discord.ui.Modal):
 
 
 async def setup(bot):
-    await bot.add_cog(BotOperations(bot, sqlite3.connect('db/settings.sqlite')))
+    await bot.add_cog(BotOperations(bot, db.connect_persistent(db.SETTINGS)))

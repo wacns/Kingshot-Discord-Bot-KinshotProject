@@ -111,6 +111,19 @@ def test_unknown_response_is_unknown():
 import sqlite3
 
 
+class _KeepOpen:
+    """Hands a shared in-memory connection to code that closes its connection."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def close(self):
+        pass
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
 def test_get_user_kid_falls_back_to_test_fid_kingdom(monkeypatch):
     users = sqlite3.connect(":memory:", check_same_thread=False)  # get_user_kid reads via to_thread
     users.execute("CREATE TABLE users (fid INTEGER, kid INTEGER)")
@@ -123,8 +136,8 @@ def test_get_user_kid_falls_back_to_test_fid_kingdom(monkeypatch):
     real = sqlite3.connect
 
     def fake(path, *a, **k):
-        if str(path).endswith("users.sqlite"): return users
-        if str(path).endswith("settings.sqlite"): return settings
+        if str(path).endswith("users.sqlite"): return _KeepOpen(users)
+        if str(path).endswith("settings.sqlite"): return _KeepOpen(settings)
         return real(path, *a, **k)
 
     monkeypatch.setattr(gr.sqlite3, "connect", fake)

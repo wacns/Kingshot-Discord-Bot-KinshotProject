@@ -5,11 +5,12 @@ from datetime import date, timedelta
 
 import discord
 
+from . import db
 from .bear_track import _isolate_rtl, _ltr_line
 from .pimp_my_bot import theme, check_interaction_user, safe_edit_message, menu_timeout
 
-_ATT_DB = "db/attendance.sqlite"
-_USERS_DB = "db/users.sqlite"
+_ATT_DB = db.ATTENDANCE
+_USERS_DB = db.USERS
 
 # attendance_sessions stores internal event keys; the UI shows the labels below.
 NO_SHOW_EVENT_TYPES = ["foundry_battle", "canyon_clash"]
@@ -50,7 +51,7 @@ def compute_no_shows(alliance_id, event_types, since_date=None, min_events=3):
         "GROUP BY ar.player_id"
     )
     params = [alliance_id, *event_types, since_date, since_date]
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         rows = conn.execute(sql, params).fetchall()
 
     out = []
@@ -86,7 +87,7 @@ def player_no_show_incidents(alliance_id, player_id, event_types, since_date=Non
         "ORDER BY s.event_date DESC"
     )
     params = [alliance_id, player_id, *event_types, since_date, since_date]
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         rows = conn.execute(sql, params).fetchall()
     return [{"session_id": sid, "event_type": et, "event_date": ed,
              "excused": bool(exc), "reason": reason} for sid, et, ed, exc, reason in rows]
@@ -94,7 +95,7 @@ def player_no_show_incidents(alliance_id, player_id, event_types, since_date=Non
 
 def set_excused(session_id, player_id, excused, reason=None):
     """Flag or clear excused on one absence row."""
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         conn.execute(
             "UPDATE attendance_records SET excused = ?, excused_reason = ? "
             "WHERE session_id = ? AND player_id = ?",
@@ -112,7 +113,7 @@ def _enrich_names(rows, alliance_id):
     nick_by_fid = {}
     current = set()
     try:
-        with sqlite3.connect(_USERS_DB, timeout=30.0) as conn:
+        with db.connect(_USERS_DB) as conn:
             placeholders = ",".join("?" * len(fids))
             for fid, nick, alliance in conn.execute(
                 f"SELECT fid, nickname, alliance FROM users WHERE fid IN ({placeholders})",

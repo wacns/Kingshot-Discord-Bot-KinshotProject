@@ -3,7 +3,6 @@ Notification setup wizard. Guides users through first-time notification configur
 """
 import discord
 from discord.ext import commands
-import sqlite3
 import logging
 from datetime import datetime, timedelta
 import pytz
@@ -18,6 +17,7 @@ from notification_event_types import (
     cycle_repeat_minutes, first_future_occurrence, get_timezone, utc_offset_zone_name
 )
 from .permission_handler import PermissionManager
+from . import db
 from .pimp_my_bot import theme, menu_timeout
 
 logger = logging.getLogger('notification')
@@ -25,16 +25,11 @@ logger = logging.getLogger('notification')
 class NotificationWizard(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db_path = 'db/beartime.sqlite'
+        self.db_path = db.BEARTIME
         os.makedirs('db', exist_ok=True)
 
-        self.conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+        self.conn = db.connect_persistent(self.db_path)
         self.cursor = self.conn.cursor()
-
-        # Enable WAL mode
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=NORMAL")
-        self.conn.commit()
 
         # Create wizard tracking table
         self.cursor.execute("""

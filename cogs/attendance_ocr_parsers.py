@@ -5,7 +5,6 @@ import difflib
 import functools
 import logging
 import re
-import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -13,6 +12,7 @@ from typing import Optional
 
 import discord
 
+from . import db
 from .pimp_my_bot import theme, menu_timeout
 from .permission_handler import can_edit_upload
 from . import alliance_power_changes
@@ -627,7 +627,7 @@ def _alliance_ocr_langs(alliance_id, names) -> tuple[str, list]:
     from . import bear_track
     default = bear_track.DEFAULT_OCR_LANG
     try:
-        with sqlite3.connect("db/alliance.sqlite", timeout=30.0) as conn:
+        with db.connect(db.ALLIANCE) as conn:
             row = conn.execute(
                 "SELECT bear_ocr_lang FROM alliancesettings WHERE alliance_id = ?",
                 (alliance_id,)).fetchone()
@@ -852,7 +852,7 @@ def _dedup_into(target: list[dict], new_row: dict) -> None:
 
 
 def load_alliance_roster(alliance_id: int) -> list[tuple[int, str]]:
-    with sqlite3.connect("db/users.sqlite", timeout=30.0) as conn:
+    with db.connect(db.USERS) as conn:
         rows = conn.execute(
             "SELECT fid, nickname FROM users WHERE alliance = ?",
             (str(alliance_id),),
@@ -1048,7 +1048,7 @@ def fuzzy_match_name(detected: str, roster: list[tuple[int, str]],
 
 
 def update_users_power(fid: int, power: int, ts_iso: str) -> None:
-    with sqlite3.connect(_USERS_DB, timeout=30.0) as conn:
+    with db.connect(_USERS_DB) as conn:
         row = conn.execute("SELECT power FROM users WHERE fid = ?", (fid,)).fetchone()
         old = row[0] if row else None
         conn.execute(
@@ -1060,7 +1060,7 @@ def update_users_power(fid: int, power: int, ts_iso: str) -> None:
 
 
 def update_users_combat_power(fid: int, combat_power: int, ts_iso: str) -> None:
-    with sqlite3.connect(_USERS_DB, timeout=30.0) as conn:
+    with db.connect(_USERS_DB) as conn:
         row = conn.execute(
             "SELECT combat_power FROM users WHERE fid = ?", (fid,)
         ).fetchone()
@@ -1075,8 +1075,8 @@ def update_users_combat_power(fid: int, combat_power: int, ts_iso: str) -> None:
 
 # ── attendance session DB helpers ─────────────────────────────────────────
 
-_ATT_DB = "db/attendance.sqlite"
-_USERS_DB = "db/users.sqlite"
+_ATT_DB = db.ATTENDANCE
+_USERS_DB = db.USERS
 
 # Min similarity to reuse a stored alias key when OCR drifts between screenshots.
 _OCR_ALIAS_FUZZY_MIN = 0.92
@@ -1087,7 +1087,7 @@ def _init_ocr_alias_table() -> None:
     bot can't read (decorated/homoglyph gamertags) to the player an admin
     resolved it to, so it only has to be fixed by hand once."""
     try:
-        with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+        with db.connect(_ATT_DB) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS ocr_name_alias (
                     alliance_id INTEGER NOT NULL,
@@ -1116,7 +1116,7 @@ def learn_name_alias(alliance_id, ocr_name, fid) -> None:
     if len(key) < 2:  # too little signal to key on reliably
         return
     try:
-        with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+        with db.connect(_ATT_DB) as conn:
             conn.execute("""
                 INSERT INTO ocr_name_alias (alliance_id, ocr_key, fid, raw_name, updated_at)
                 VALUES (?, ?, ?, ?, ?)
@@ -1142,7 +1142,7 @@ def _load_alliance_aliases(alliance_id: int) -> list:
     if cached is not None:
         return cached
     try:
-        with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+        with db.connect(_ATT_DB) as conn:
             rows = conn.execute(
                 "SELECT ocr_key, fid FROM ocr_name_alias WHERE alliance_id = ?",
                 (aid,)).fetchall()
@@ -1185,7 +1185,7 @@ def rematch_unmatched_rows(session_id: str, alliance_id: int) -> int:
     if not roster:
         return 0
     resolved = 0
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         rows = conn.execute(
             "SELECT player_id, player_name FROM attendance_records WHERE session_id = ?",
             (session_id,)).fetchall()
@@ -1217,7 +1217,7 @@ def rematch_unmatched_rows(session_id: str, alliance_id: int) -> int:
 
 def _record_session(*, session_id, event_type, event_date, date_confidence,
                     event_subtype, alliance_id, awaiting_result=1):
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         conn.execute(
             "INSERT INTO attendance_sessions "
             "(session_id, event_type, event_date, event_date_confidence, "
@@ -1235,7 +1235,7 @@ def _find_closed_session(*, event_type, event_date, event_subtype, alliance_id) 
     or None. Lets re-uploads of a finished event reopen its review."""
     if event_date is None:
         return None
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         row = conn.execute(
             "SELECT session_id FROM attendance_sessions "
             "WHERE event_type = ? AND alliance_id = ? AND awaiting_result = 0 "
@@ -1253,7 +1253,7 @@ def _find_open_session(*, event_type, event_date, event_subtype, alliance_id) ->
     result upload picks up the registered roster from its registration session."""
     if event_date is None:
         return None
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         row = conn.execute(
             "SELECT session_id FROM attendance_sessions "
             "WHERE event_type = ? AND alliance_id = ? AND awaiting_result = 1 "
@@ -1282,7 +1282,7 @@ def _load_existing_session_data(session_id: str) -> dict:
         "rows": [],                # status='present'
         "registered_rows": [],     # status='registered' — pre-event combatants
     }
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         hdr = conn.execute(
             "SELECT alliance_rank, event_time, event_date, event_subtype "
             "FROM attendance_sessions WHERE session_id = ?",
@@ -1360,7 +1360,7 @@ def _find_or_create_session(*, event_type, event_date, event_subtype, alliance_i
             alliance_id=alliance_id,
         )
         return sid
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         row = conn.execute(
             "SELECT session_id FROM attendance_sessions "
             "WHERE event_type = ? AND alliance_id = ? AND awaiting_result = 1 "
@@ -1397,7 +1397,7 @@ def _record_attendance_row(*, session_id, event_type, event_date, event_subtype,
                            alliance_id, fid, name, status, points,
                            alliance_rank=None):
     session_name = _ocr_session_label(event_date, event_subtype)
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         conn.execute(
             "INSERT OR IGNORE INTO attendance_records "
             "(session_id, session_name, event_type, event_date, player_id, player_name, "
@@ -1414,7 +1414,7 @@ def _record_attendance_row(*, session_id, event_type, event_date, event_subtype,
 def _upsert_attendance_row(*, session_id, event_type, event_date, event_subtype,
                            alliance_id, fid, name, status, points):
     session_name = _ocr_session_label(event_date, event_subtype)
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         existing = conn.execute(
             "SELECT 1 FROM attendance_records WHERE session_id = ? AND player_id = ?",
             (session_id, str(fid)),
@@ -1442,7 +1442,7 @@ def _upsert_attendance_row(*, session_id, event_type, event_date, event_subtype,
 
 def _mark_registered_as_absent(session_id: str, except_fids: set[int]) -> list[dict]:
     no_shows = []
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         rows = conn.execute(
             "SELECT player_id, player_name FROM attendance_records "
             "WHERE session_id = ? AND status = 'registered'",
@@ -1466,7 +1466,7 @@ def _mark_registered_as_absent(session_id: str, except_fids: set[int]) -> list[d
 
 
 def _close_session(session_id: str) -> None:
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         conn.execute(
             "UPDATE attendance_sessions SET awaiting_result = 0, "
             "closed_at = CURRENT_TIMESTAMP WHERE session_id = ?",
@@ -1478,7 +1478,7 @@ def _close_session(session_id: str) -> None:
 def delete_session(session_id: str) -> None:
     """Remove a session and all its rows (records, scoreboard, stats, MVPs).
     users.power/combat_power are independent and left untouched."""
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         for tbl in ("attendance_records", "attendance_session_scoreboard",
                     "attendance_session_stats", "attendance_session_mvps",
                     "attendance_sessions"):
@@ -1507,7 +1507,7 @@ def sync_bear_attendance_event(*, alliance_id, hunt_id, date, hunting_trap,
     session_id = _bear_session_id(hunt_id)
     trap_label = _bear_trap_label(hunting_trap)
     session_name = f"{trap_label} - {date}"
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         conn.execute("DELETE FROM attendance_records WHERE session_id = ?", (session_id,))
         conn.execute(
             "INSERT OR REPLACE INTO attendance_sessions "
@@ -1531,7 +1531,7 @@ def sync_bear_attendance_event(*, alliance_id, hunt_id, date, hunting_trap,
 def delete_bear_attendance_event(*, hunt_id) -> None:
     """Remove the attendance event mirroring a deleted bear hunt."""
     session_id = _bear_session_id(hunt_id)
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         conn.execute("DELETE FROM attendance_records WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM attendance_sessions WHERE session_id = ?", (session_id,))
         conn.commit()
@@ -1540,7 +1540,7 @@ def delete_bear_attendance_event(*, hunt_id) -> None:
 def _unmatched_id_floor(session_id: str) -> int:
     """Most-negative existing player_id for this session, or 0 if none. Callers
     decrement from this to allocate a fresh per-session placeholder id."""
-    with sqlite3.connect(_ATT_DB, timeout=30.0) as conn:
+    with db.connect(_ATT_DB) as conn:
         row = conn.execute(
             "SELECT MIN(CAST(player_id AS INTEGER)) FROM attendance_records "
             "WHERE session_id = ? AND CAST(player_id AS INTEGER) < 0",

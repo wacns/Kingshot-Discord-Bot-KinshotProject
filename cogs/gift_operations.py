@@ -23,6 +23,7 @@ from . import onnx_lifecycle
 from . import alliance_member_states
 from . import process_queue
 from . import gift_channels
+from . import db
 from . import gift_settings
 from .gift_views import GiftView
 
@@ -52,11 +53,9 @@ class GiftOperations(commands.Cog):
             self.conn = bot.conn
             self.cursor = self.conn.cursor()
         else:
-            self.conn = sqlite3.connect('db/giftcode.sqlite', timeout=30.0)
+            self.conn = db.connect_persistent(db.GIFTCODE)
             self.cursor = self.conn.cursor()
 
-            self.conn.execute("PRAGMA journal_mode=WAL")
-            self.conn.execute("PRAGMA synchronous=NORMAL")
             self.conn.execute("PRAGMA cache_size=10000")
             self.conn.execute("PRAGMA temp_store=MEMORY")
             self.conn.commit()
@@ -74,11 +73,11 @@ class GiftOperations(commands.Cog):
         self.conn.commit()
 
         # Settings DB Connection
-        self.settings_conn = sqlite3.connect('db/settings.sqlite', timeout=30.0, check_same_thread=False)
+        self.settings_conn = db.connect_persistent(db.SETTINGS)
         self.settings_cursor = self.settings_conn.cursor()
 
         # Alliance DB Connection
-        self.alliance_conn = sqlite3.connect('db/alliance.sqlite', timeout=30.0, check_same_thread=False)
+        self.alliance_conn = db.connect_persistent(db.ALLIANCE)
         self.alliance_cursor = self.alliance_conn.cursor()
 
         # Gift Code Channel Table
@@ -401,15 +400,23 @@ class GiftOperations(commands.Cog):
 
     def assign_alliance_state_to_missing(self):
         """Fast no-API backfill: NULL-kid members inherit their alliance's bound kingdom,
-        then catch up on the codes they missed while kingdom-less. Returns (assigned, caught_up)."""
+        then catch up on the codes they missed while kingdom-less. Returns (assigned, caught_up).
+        Runs on a worker thread, so it reads gift codes through its own connection."""
         fids = gift_state_resolver.assign_alliance_kid_to_missing()
+        if not fids:
+            return 0, 0
         caught = 0
-        for fid in fids:
-            try:
-                if gift_redemption.enqueue_member_redemption(self, fid):
-                    caught += 1
-            except Exception as e:
-                self.logger.warning(f"GiftOps: could not queue catch-up for FID {fid}: {e}")
+        try:
+            with db.connect(db.GIFTCODE) as giftcode_conn:
+                for fid in fids:
+                    try:
+                        if gift_redemption.enqueue_member_redemption(self, fid, conn=giftcode_conn):
+                            caught += 1
+                    except Exception as e:
+                        self.logger.warning(f"GiftOps: could not queue catch-up for FID {fid}: {e}")
+        except Exception as e:
+            # The kingdom assignment already committed; only the catch-up is lost.
+            self.logger.warning(f"GiftOps: could not open the gift code database for catch-up: {e}")
         return len(fids), caught
 
     def queue_kingdom_scan(self, mode):

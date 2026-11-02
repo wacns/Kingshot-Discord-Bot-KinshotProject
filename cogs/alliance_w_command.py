@@ -1,11 +1,10 @@
 """The /w "who is" command. Shows the stored profile for an in-game ID, or a live Player Sync lookup."""
 import discord
 from discord.ext import commands
-import sqlite3
-from contextlib import closing
 import asyncio
 import logging
 from datetime import datetime, timezone
+from . import db
 from .pimp_my_bot import theme
 from .alliance_member_edit import new_member_name
 from .bot_level_mapping import format_furnace_level
@@ -36,7 +35,7 @@ def _format_big_int(n) -> str:
 class WCommand(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.conn = sqlite3.connect('db/changes.sqlite', timeout=30.0, check_same_thread=False)
+        self.conn = db.connect_persistent(db.CHANGES)
         self.c = self.conn.cursor()
 
         self.level_mapping = {
@@ -66,7 +65,7 @@ class WCommand(commands.Cog):
     async def autocomplete_fid(self, interaction: discord.Interaction, current: str):
         try:
             def _read():
-                with sqlite3.connect('db/users.sqlite', timeout=30.0) as users_db:
+                with db.connect(db.USERS) as users_db:
                     return users_db.execute("SELECT fid, nickname FROM users").fetchall()
             users = await asyncio.to_thread(_read)
 
@@ -102,7 +101,7 @@ class WCommand(commands.Cog):
             await interaction.followup.send("An error occurred while fetching user info.")
 
     def _read_stored(self, fid: str):
-        with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as users_db:
+        with db.connect(db.USERS) as users_db:
             row = users_db.execute(
                 "SELECT nickname, kid, alliance, power, power_updated_at, combat_power, "
                 "combat_power_updated_at, discord_id, discord_id_updated_at, furnace_lv, "
@@ -113,7 +112,7 @@ class WCommand(commands.Cog):
             return None
         alliance_name = None
         if row[2]:
-            with closing(sqlite3.connect('db/alliance.sqlite', timeout=30.0)) as alliance_db:
+            with db.connect(db.ALLIANCE) as alliance_db:
                 found = alliance_db.execute(
                     "SELECT name FROM alliance_list WHERE alliance_id=?", (row[2],)
                 ).fetchone()

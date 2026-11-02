@@ -11,12 +11,12 @@ Bot Owner anchor:
   alliance(s).
 """
 
-import sqlite3
 import time
 import logging
-from contextlib import closing
 from datetime import datetime, timezone
 from typing import Tuple, List, Optional
+
+from . import db
 
 logger = logging.getLogger('bot')
 
@@ -30,9 +30,9 @@ TIER_NONE = 'none'
 class PermissionManager:
     """Centralized permission handler"""
 
-    SETTINGS_DB = 'db/settings.sqlite'
-    ALLIANCE_DB = 'db/alliance.sqlite'
-    USERS_DB = 'db/users.sqlite'
+    SETTINGS_DB = db.SETTINGS
+    ALLIANCE_DB = db.ALLIANCE
+    USERS_DB = db.USERS
 
     # Short-TTL cache of the admin table ({id: is_initial}). is_admin is the
     # hottest permission primitive (per-keystroke autocompletes, per-click gates);
@@ -46,8 +46,8 @@ class PermissionManager:
     def _admin_map(cls) -> dict:
         now = time.monotonic()
         if cls._admin_cache is None or (now - cls._admin_cache_at) > cls._ADMIN_CACHE_TTL:
-            with sqlite3.connect(cls.SETTINGS_DB) as db:
-                rows = db.execute("SELECT id, is_initial FROM admin").fetchall()
+            with db.connect(cls.SETTINGS_DB) as conn:
+                rows = conn.execute("SELECT id, is_initial FROM admin").fetchall()
             cls._admin_cache = {int(r[0]): r[1] for r in rows}
             cls._admin_cache_at = now
         return cls._admin_cache
@@ -86,14 +86,14 @@ class PermissionManager:
             return [], True
 
         rg = PermissionManager._cached_role_grant(user_id) or {"server": False, "alliance_ids": [], "guild_id": None}
-        with closing(sqlite3.connect(PermissionManager.SETTINGS_DB)) as db:
-            user_assigned = [r[0] for r in db.execute(
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            user_assigned = [r[0] for r in conn.execute(
                 "SELECT alliances_id FROM adminserver WHERE admin = ?", (user_id,)).fetchall()]
         user_is_server_tier = (user_id in PermissionManager._admin_map()) and not user_assigned
         # Role server-tier is guild-scoped: only when the cached grant came from this guild.
         role_server = rg["server"] and rg.get("guild_id") == guild_id
         if role_server or user_is_server_tier:
-            with closing(sqlite3.connect(PermissionManager.ALLIANCE_DB)) as adb:
+            with db.connect(PermissionManager.ALLIANCE_DB) as adb:
                 return [r[0] for r in adb.execute(
                     "SELECT alliance_id FROM alliance_list WHERE discord_server_id = ?", (guild_id,)).fetchall()], False
         return sorted(set(user_assigned) | set(rg["alliance_ids"])), False
@@ -112,15 +112,15 @@ class PermissionManager:
             return [], False
 
         if is_global:
-            with closing(sqlite3.connect(PermissionManager.ALLIANCE_DB)) as db:
-                return db.execute("SELECT DISTINCT alliance_id, name FROM alliance_list ORDER BY name").fetchall(), True
+            with db.connect(PermissionManager.ALLIANCE_DB) as conn:
+                return conn.execute("SELECT DISTINCT alliance_id, name FROM alliance_list ORDER BY name").fetchall(), True
 
         ids, _ = PermissionManager.get_admin_alliance_ids(user_id, guild_id)
         if not ids:
             return [], False
-        with closing(sqlite3.connect(PermissionManager.ALLIANCE_DB)) as db:
+        with db.connect(PermissionManager.ALLIANCE_DB) as conn:
             ph = ','.join('?' * len(ids))
-            return db.execute(
+            return conn.execute(
                 f"SELECT DISTINCT alliance_id, name FROM alliance_list WHERE alliance_id IN ({ph}) ORDER BY name", ids
             ).fetchall(), False
 
@@ -139,8 +139,8 @@ class PermissionManager:
 
         if is_global:
             # Global admin - return ALL users
-            with sqlite3.connect(PermissionManager.USERS_DB) as db:
-                cursor = db.cursor()
+            with db.connect(PermissionManager.USERS_DB) as conn:
+                cursor = conn.cursor()
                 cursor.execute("SELECT fid, nickname, alliance FROM users ORDER BY LOWER(nickname)")
                 return cursor.fetchall()
 
@@ -151,8 +151,8 @@ class PermissionManager:
             return []
 
         # Get users from those alliances
-        with sqlite3.connect(PermissionManager.USERS_DB) as db:
-            cursor = db.cursor()
+        with db.connect(PermissionManager.USERS_DB) as conn:
+            cursor = conn.cursor()
             placeholders = ','.join('?' * len(alliance_ids))
             cursor.execute(f"""
                 SELECT fid, nickname, alliance
@@ -169,8 +169,8 @@ class PermissionManager:
     @staticmethod
     def list_alliances() -> List[Tuple[int, str]]:
         """Return [(alliance_id, name), ...] sorted by name."""
-        with sqlite3.connect(PermissionManager.ALLIANCE_DB) as db:
-            cur = db.cursor()
+        with db.connect(PermissionManager.ALLIANCE_DB) as conn:
+            cur = conn.cursor()
             cur.execute("SELECT alliance_id, name FROM alliance_list ORDER BY LOWER(name)")
             return cur.fetchall()
 
@@ -179,15 +179,15 @@ class PermissionManager:
         """Return [alliance_id, ...] for the rows in `adminserver` belonging
         to this admin. Empty list when the admin has no specific assignments
         (Server-tier or Global)."""
-        with sqlite3.connect(PermissionManager.SETTINGS_DB) as db:
-            cur = db.cursor()
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            cur = conn.cursor()
             cur.execute("SELECT alliances_id FROM adminserver WHERE admin = ?", (user_id,))
             return [int(row[0]) for row in cur.fetchall()]
 
     @staticmethod
     def is_owner(user_id: int) -> bool:
-        with sqlite3.connect(PermissionManager.SETTINGS_DB) as db:
-            cur = db.cursor()
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            cur = conn.cursor()
             cur.execute("SELECT is_owner FROM admin WHERE id = ?", (user_id,))
             row = cur.fetchone()
         return bool(row and row[0])
@@ -196,16 +196,16 @@ class PermissionManager:
     def get_owner_id() -> Optional[int]:
         """Return the Discord user id of the bot owner, or None when no
         owner has been claimed yet."""
-        with sqlite3.connect(PermissionManager.SETTINGS_DB) as db:
-            cur = db.cursor()
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            cur = conn.cursor()
             cur.execute("SELECT id FROM admin WHERE is_owner = 1 LIMIT 1")
             row = cur.fetchone()
         return int(row[0]) if row else None
 
     @staticmethod
     def count_globals() -> int:
-        with sqlite3.connect(PermissionManager.SETTINGS_DB) as db:
-            cur = db.cursor()
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            cur = conn.cursor()
             cur.execute("SELECT COUNT(*) FROM admin WHERE is_initial = 1")
             return int(cur.fetchone()[0])
 
@@ -216,8 +216,8 @@ class PermissionManager:
         Tier is derived: 'owner' overrides 'global', otherwise the presence
         or absence of `adminserver` rows distinguishes 'alliance' from 'server'.
         """
-        with sqlite3.connect(PermissionManager.SETTINGS_DB) as db:
-            cur = db.cursor()
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            cur = conn.cursor()
             cur.execute("""
                 SELECT a.id, a.is_initial, a.is_owner,
                        (SELECT COUNT(*) FROM adminserver s WHERE s.admin = a.id) AS alliance_count
@@ -246,8 +246,8 @@ class PermissionManager:
 
     @staticmethod
     def get_tier(user_id: int) -> str:
-        with sqlite3.connect(PermissionManager.SETTINGS_DB) as db:
-            cur = db.cursor()
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            cur = conn.cursor()
             cur.execute(
                 "SELECT a.is_initial, a.is_owner, "
                 "(SELECT COUNT(*) FROM adminserver s WHERE s.admin = a.id) "
@@ -272,8 +272,8 @@ class PermissionManager:
             raise ValueError(f"Unknown tier: {tier}")
         if tier == TIER_ALLIANCE and not alliance_ids:
             raise ValueError("Alliance tier requires at least one alliance_id")
-        with sqlite3.connect(PermissionManager.SETTINGS_DB) as db:
-            cur = db.cursor()
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            cur = conn.cursor()
             cur.execute("SELECT COUNT(*) FROM admin")
             total_admins = int(cur.fetchone()[0])
             # Brand-new install: the very first admin added auto-becomes
@@ -296,7 +296,7 @@ class PermissionManager:
                         "INSERT OR IGNORE INTO adminserver (admin, alliances_id) VALUES (?, ?)",
                         (user_id, aid),
                     )
-            db.commit()
+            conn.commit()
 
     @staticmethod
     def set_tier(user_id: int, tier: str, *, alliance_ids: Optional[List[int]] = None) -> None:
@@ -308,8 +308,8 @@ class PermissionManager:
             raise ValueError(f"Unknown tier: {tier}")
         if tier == TIER_ALLIANCE and not alliance_ids:
             raise ValueError("Alliance tier requires at least one alliance_id")
-        with sqlite3.connect(PermissionManager.SETTINGS_DB) as db:
-            cur = db.cursor()
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            cur = conn.cursor()
             cur.execute("SELECT is_owner FROM admin WHERE id = ?", (user_id,))
             row = cur.fetchone()
             if not row:
@@ -326,21 +326,21 @@ class PermissionManager:
                         "INSERT OR IGNORE INTO adminserver (admin, alliances_id) VALUES (?, ?)",
                         (user_id, aid),
                     )
-            db.commit()
+            conn.commit()
 
     @staticmethod
     def remove_admin(user_id: int) -> None:
         """Delete an admin and all their alliance assignments. Owner is
         guarded — caller must ensure the target isn't the owner."""
-        with sqlite3.connect(PermissionManager.SETTINGS_DB) as db:
-            cur = db.cursor()
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            cur = conn.cursor()
             cur.execute("SELECT is_owner FROM admin WHERE id = ?", (user_id,))
             row = cur.fetchone()
             if row and row[0]:
                 raise ValueError("Cannot remove the bot owner; transfer ownership first")
             cur.execute("DELETE FROM adminserver WHERE admin = ?", (user_id,))
             cur.execute("DELETE FROM admin WHERE id = ?", (user_id,))
-            db.commit()
+            conn.commit()
 
     @staticmethod
     def claim_owner(user_id: int) -> bool:
@@ -348,8 +348,8 @@ class PermissionManager:
         bot starts with multiple existing globals and no owner. Returns
         True if this user just became the owner, False if someone else
         already had it."""
-        with sqlite3.connect(PermissionManager.SETTINGS_DB) as db:
-            cur = db.cursor()
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            cur = conn.cursor()
             cur.execute("SELECT 1 FROM admin WHERE is_owner = 1 LIMIT 1")
             if cur.fetchone():
                 return False
@@ -358,15 +358,15 @@ class PermissionManager:
                 (user_id,),
             )
             changed = cur.rowcount > 0
-            db.commit()
+            conn.commit()
             return changed
 
     @staticmethod
     def transfer_owner(from_user_id: int, to_user_id: int) -> None:
         """Move the is_owner flag atomically. Both must be admins; the
         recipient must already be Global tier (caller guards this in UI)."""
-        with sqlite3.connect(PermissionManager.SETTINGS_DB) as db:
-            cur = db.cursor()
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            cur = conn.cursor()
             cur.execute("SELECT is_owner FROM admin WHERE id = ?", (from_user_id,))
             row = cur.fetchone()
             if not row or not row[0]:
@@ -379,13 +379,13 @@ class PermissionManager:
                 raise ValueError("Target user must be Global tier before receiving ownership")
             cur.execute("UPDATE admin SET is_owner = 0 WHERE id = ?", (from_user_id,))
             cur.execute("UPDATE admin SET is_owner = 1 WHERE id = ?", (to_user_id,))
-            db.commit()
+            conn.commit()
 
     @staticmethod
     def describe_state(user_id: int) -> str:
         """Human-readable admin state for the audit log (e.g. 'Alliance Admin (2 alliances)')."""
-        with sqlite3.connect(PermissionManager.SETTINGS_DB) as db:
-            cur = db.cursor()
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            cur = conn.cursor()
             cur.execute("SELECT is_initial, is_owner FROM admin WHERE id = ?", (user_id,))
             row = cur.fetchone()
             if not row:
@@ -407,15 +407,15 @@ class PermissionManager:
                    before_state: Optional[str], after_state: Optional[str]) -> None:
         """Append a row to permission_audit_log. Called by the UI after every admin mutation."""
         try:
-            with sqlite3.connect(PermissionManager.SETTINGS_DB) as db:
-                db.execute(
+            with db.connect(PermissionManager.SETTINGS_DB) as conn:
+                conn.execute(
                     "INSERT INTO permission_audit_log "
                     "(actor_id, action, target_id, before_state, after_state, timestamp) "
                     "VALUES (?, ?, ?, ?, ?, ?)",
                     (actor_id, action, target_id, before_state, after_state,
                      datetime.now(timezone.utc).isoformat()),
                 )
-                db.commit()
+                conn.commit()
         except Exception as e:
             logger.error(f"Failed to write permission audit log: {e}")
             print(f"Failed to write permission audit log: {e}")
@@ -423,8 +423,8 @@ class PermissionManager:
     @staticmethod
     def get_audit_log_page(offset: int = 0, limit: int = 10) -> Tuple[List[dict], int]:
         """Return (rows, total_count) for the audit log, newest first."""
-        with sqlite3.connect(PermissionManager.SETTINGS_DB) as db:
-            cur = db.cursor()
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            cur = conn.cursor()
             cur.execute("SELECT COUNT(*) FROM permission_audit_log")
             total = int(cur.fetchone()[0])
             cur.execute(
@@ -452,51 +452,51 @@ class PermissionManager:
         if tier == TIER_ALLIANCE and not alliance_ids:
             raise ValueError("Alliance tier requires at least one alliance_id")
         is_initial = 1 if tier == TIER_GLOBAL else 0
-        with closing(sqlite3.connect(PermissionManager.SETTINGS_DB)) as db, db:
-            db.execute("INSERT OR REPLACE INTO admin_role (role_id, guild_id, is_initial) VALUES (?, ?, ?)",
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            conn.execute("INSERT OR REPLACE INTO admin_role (role_id, guild_id, is_initial) VALUES (?, ?, ?)",
                        (role_id, guild_id, is_initial))
-            db.execute("DELETE FROM adminserver_role WHERE role_id = ?", (role_id,))
+            conn.execute("DELETE FROM adminserver_role WHERE role_id = ?", (role_id,))
             if tier == TIER_ALLIANCE:
                 for aid in alliance_ids or []:
-                    db.execute("INSERT OR IGNORE INTO adminserver_role (role_id, alliances_id) VALUES (?, ?)", (role_id, aid))
+                    conn.execute("INSERT OR IGNORE INTO adminserver_role (role_id, alliances_id) VALUES (?, ?)", (role_id, aid))
         PermissionManager._bust_role_cache()
 
     @staticmethod
     def set_role_tier(role_id: int, tier: str, *, alliance_ids: Optional[List[int]] = None) -> None:
-        with closing(sqlite3.connect(PermissionManager.SETTINGS_DB)) as db:
-            row = db.execute("SELECT guild_id FROM admin_role WHERE role_id = ?", (role_id,)).fetchone()
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            row = conn.execute("SELECT guild_id FROM admin_role WHERE role_id = ?", (role_id,)).fetchone()
         if not row:
             raise ValueError(f"Role {role_id} is not granted")
         PermissionManager.add_role_grant(role_id, row[0], tier=tier, alliance_ids=alliance_ids)
 
     @staticmethod
     def remove_role_grant(role_id: int) -> None:
-        with closing(sqlite3.connect(PermissionManager.SETTINGS_DB)) as db, db:
-            db.execute("DELETE FROM adminserver_role WHERE role_id = ?", (role_id,))
-            db.execute("DELETE FROM admin_role WHERE role_id = ?", (role_id,))
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            conn.execute("DELETE FROM adminserver_role WHERE role_id = ?", (role_id,))
+            conn.execute("DELETE FROM admin_role WHERE role_id = ?", (role_id,))
         PermissionManager._bust_role_cache()
 
     @staticmethod
     def get_role_alliance_assignments(role_id: int) -> List[int]:
-        with closing(sqlite3.connect(PermissionManager.SETTINGS_DB)) as db:
-            return [int(r[0]) for r in db.execute(
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            return [int(r[0]) for r in conn.execute(
                 "SELECT alliances_id FROM adminserver_role WHERE role_id = ?", (role_id,)).fetchall()]
 
     @staticmethod
     def get_role_tier(role_id: int) -> str:
-        with closing(sqlite3.connect(PermissionManager.SETTINGS_DB)) as db:
-            row = db.execute("SELECT is_initial FROM admin_role WHERE role_id = ?", (role_id,)).fetchone()
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            row = conn.execute("SELECT is_initial FROM admin_role WHERE role_id = ?", (role_id,)).fetchone()
             if not row:
                 return TIER_NONE
             if row[0]:
                 return TIER_GLOBAL
-            n = db.execute("SELECT COUNT(*) FROM adminserver_role WHERE role_id = ?", (role_id,)).fetchone()[0]
+            n = conn.execute("SELECT COUNT(*) FROM adminserver_role WHERE role_id = ?", (role_id,)).fetchone()[0]
         return TIER_ALLIANCE if n else TIER_SERVER
 
     @staticmethod
     def list_role_grants() -> List[dict]:
-        with closing(sqlite3.connect(PermissionManager.SETTINGS_DB)) as db:
-            rows = db.execute(
+        with db.connect(PermissionManager.SETTINGS_DB) as conn:
+            rows = conn.execute(
                 "SELECT r.role_id, r.guild_id, r.is_initial, "
                 "(SELECT COUNT(*) FROM adminserver_role s WHERE s.role_id = r.role_id) "
                 "FROM admin_role r ORDER BY r.is_initial DESC, r.role_id").fetchall()
@@ -528,9 +528,9 @@ class PermissionManager:
         now = time.monotonic()
         if cls._role_map_cache is None or (now - cls._role_map_cache_at) > cls._ROLE_MAP_TTL:
             out = {}
-            with closing(sqlite3.connect(cls.SETTINGS_DB)) as db:
-                for role_id, is_initial in db.execute("SELECT role_id, is_initial FROM admin_role").fetchall():
-                    aids = [int(r[0]) for r in db.execute(
+            with db.connect(cls.SETTINGS_DB) as conn:
+                for role_id, is_initial in conn.execute("SELECT role_id, is_initial FROM admin_role").fetchall():
+                    aids = [int(r[0]) for r in conn.execute(
                         "SELECT alliances_id FROM adminserver_role WHERE role_id = ?", (role_id,)).fetchall()]
                     tier = TIER_GLOBAL if is_initial else (TIER_ALLIANCE if aids else TIER_SERVER)
                     out[int(role_id)] = (tier, aids)

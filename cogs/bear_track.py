@@ -15,10 +15,10 @@ import sqlite3
 import time
 import unicodedata
 import logging
-from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta, timezone
 from cogs.attendance import MATPLOTLIB_AVAILABLE
+from . import db
 from .pimp_my_bot import theme, safe_edit_message, check_interaction_user, menu_timeout, confirm_timeout
 from .permission_handler import PermissionManager, can_edit_upload, editor_mode_label, next_editor_mode
 from .alliance_member_edit import (
@@ -87,7 +87,7 @@ try:
 except ValueError:
     OCR_REMOTE_TIMEOUT = 60.0
 
-_SETTINGS_DB = "db/settings.sqlite"
+_SETTINGS_DB = db.SETTINGS
 _remote_ocr_cache = (0.0, None)  # (monotonic expiry, URL string | "" | None)
 
 
@@ -101,7 +101,7 @@ def remote_ocr_setting():
         return val
     val = None
     try:
-        with sqlite3.connect(_SETTINGS_DB, timeout=30.0) as conn:
+        with db.connect(_SETTINGS_DB) as conn:
             row = conn.execute(
                 "SELECT setting_value FROM bot_global_settings WHERE setting_key=?",
                 ("remote_ocr_url",),
@@ -150,7 +150,7 @@ if PIL_AVAILABLE:
 
 os.makedirs("db", exist_ok=True)
 
-BEAR_DB_PATH = "db/bear_data.sqlite"
+BEAR_DB_PATH = db.BEAR_DATA
 
 
 def _ensure_bear_hunts_event_time(conn):
@@ -163,9 +163,7 @@ def _ensure_bear_hunts_event_time(conn):
 
 def init_bear_database():
     """Initialize bear_hunts + bear_player_damage tables."""
-    with closing(sqlite3.connect(BEAR_DB_PATH, timeout=30.0)) as conn:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
+    with db.connect(BEAR_DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS bear_hunts (
@@ -235,7 +233,7 @@ def alliance_trap_slots(alliance_id: int) -> list[int]:
     """Distinct trap slots that have saved hunts for this alliance, ascending."""
     if not alliance_id:
         return []
-    with closing(sqlite3.connect(BEAR_DB_PATH, timeout=30.0)) as conn:
+    with db.connect(BEAR_DB_PATH) as conn:
         rows = conn.execute(
             "SELECT DISTINCT hunting_trap FROM bear_hunts WHERE alliance_id=? ORDER BY hunting_trap",
             (alliance_id,),
@@ -245,7 +243,7 @@ def alliance_trap_slots(alliance_id: int) -> list[int]:
 
 def player_trap_slots(alliance_id: int, fid: int) -> list[int]:
     """Distinct trap slots this player has damage rows in, ascending."""
-    with closing(sqlite3.connect(BEAR_DB_PATH, timeout=30.0)) as conn:
+    with db.connect(BEAR_DB_PATH) as conn:
         rows = conn.execute(
             "SELECT DISTINCT h.hunting_trap FROM bear_hunts h "
             "JOIN bear_player_damage bpd ON bpd.hunt_id=h.id "
@@ -260,7 +258,7 @@ def get_farm_link(main_alliance_id: int) -> int | None:
     A dangling link (farm since deleted) simply yields an empty fallback roster."""
     if not main_alliance_id:
         return None
-    with closing(sqlite3.connect(BEAR_DB_PATH, timeout=30.0)) as conn:
+    with db.connect(BEAR_DB_PATH) as conn:
         row = conn.execute(
             "SELECT farm_alliance_id FROM bear_farm_link WHERE main_alliance_id=?",
             (main_alliance_id,),
@@ -269,7 +267,7 @@ def get_farm_link(main_alliance_id: int) -> int | None:
 
 
 def set_farm_link(main_alliance_id: int, farm_alliance_id: int) -> None:
-    with closing(sqlite3.connect(BEAR_DB_PATH, timeout=30.0)) as conn, conn:
+    with db.connect(BEAR_DB_PATH) as conn:
         conn.execute(
             "INSERT INTO bear_farm_link (main_alliance_id, farm_alliance_id) VALUES (?, ?) "
             "ON CONFLICT(main_alliance_id) DO UPDATE SET farm_alliance_id=excluded.farm_alliance_id",
@@ -278,7 +276,7 @@ def set_farm_link(main_alliance_id: int, farm_alliance_id: int) -> None:
 
 
 def clear_farm_link(main_alliance_id: int) -> None:
-    with closing(sqlite3.connect(BEAR_DB_PATH, timeout=30.0)) as conn, conn:
+    with db.connect(BEAR_DB_PATH) as conn:
         conn.execute("DELETE FROM bear_farm_link WHERE main_alliance_id=?", (main_alliance_id,))
 
 
@@ -1164,13 +1162,13 @@ def detect_fallback_langs(names, *, primary: str = "en") -> list[str]:
 
 
 def auto_managed_fallbacks(alliance_id, names, *, primary: str = "en",
-                           db_path: str = "db/alliance.sqlite") -> list[str]:
+                           db_path: str = db.ALLIANCE) -> list[str]:
     """Auto-manage on → derive fallback langs from member names, persisting them
     when the set changes (so the UI/dashboard stay accurate without writing every
     upload). Auto-manage off → the admin's manual fallbacks, untouched. Shared by
     bear + attendance so an alliance's languages are managed in one place."""
     try:
-        with sqlite3.connect(db_path, timeout=30.0) as conn:
+        with db.connect(db_path) as conn:
             row = conn.execute(
                 "SELECT bear_ocr_auto_manage, bear_ocr_fallback_langs "
                 "FROM alliancesettings WHERE alliance_id = ?", (alliance_id,)).fetchone()
@@ -1394,7 +1392,7 @@ def learn_alias(alliance_id, raw_name, fid) -> None:
     if len(key) < 2:  # too little signal to key on reliably
         return
     try:
-        with sqlite3.connect(BEAR_DB_PATH, timeout=30.0) as conn:
+        with db.connect(BEAR_DB_PATH) as conn:
             conn.execute("""
                 INSERT INTO bear_name_alias (alliance_id, ocr_key, fid, raw_name, updated_at)
                 VALUES (?, ?, ?, ?, datetime('now'))
@@ -1418,7 +1416,7 @@ def alias_lookup(alliance_id, detected_name, roster):
         return None
     roster_fids = {e[0]: e[-1] for e in roster}
     try:
-        with sqlite3.connect(BEAR_DB_PATH, timeout=30.0) as conn:
+        with db.connect(BEAR_DB_PATH) as conn:
             rows = conn.execute(
                 "SELECT ocr_key, fid FROM bear_name_alias WHERE alliance_id = ?",
                 (int(alliance_id),)).fetchall()
@@ -1459,7 +1457,7 @@ def record_ocr_lang_run(alliance_id: int, lang: str, role: str,
     if not alliance_id or not lang:
         return
     try:
-        with sqlite3.connect(BEAR_DB_PATH, timeout=30.0) as conn:
+        with db.connect(BEAR_DB_PATH) as conn:
             conn.execute("""
                 INSERT INTO bear_ocr_lang_stats
                     (alliance_id, lang, role, runs, rows_filled, last_run_at)
@@ -1476,7 +1474,7 @@ def record_ocr_lang_run(alliance_id: int, lang: str, role: str,
 def get_ocr_lang_stats(alliance_id: int) -> list[dict]:
     """Per-language effectiveness rows, most-used first."""
     try:
-        with sqlite3.connect(BEAR_DB_PATH, timeout=30.0) as conn:
+        with db.connect(BEAR_DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("""
                 SELECT lang, role, runs, rows_filled, last_run_at
@@ -2763,10 +2761,7 @@ class BearTrack(commands.Cog):
     def _open_db(path):
         """Open a SQLite connection with the cog's standard WAL settings.
         Returns (connection, cursor)."""
-        conn = sqlite3.connect(path, timeout=30.0, check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.commit()
+        conn = db.connect_persistent(path)
         return conn, conn.cursor()
 
     async def cog_unload(self):
@@ -3133,14 +3128,12 @@ class BearTrack(commands.Cog):
     # -------------------------------------------------------------------
 
     async def alliance_autocomplete(self, interaction: discord.Interaction, current: str):
-        def _query():
-            cur = self.alliance_conn.cursor()
-            cur.execute(
-                "SELECT alliance_id, name FROM alliance_list WHERE name LIKE ? ORDER BY name LIMIT 20",
-                (f"%{current}%",)
-            )
-            return cur.fetchall()
-        rows = await asyncio.to_thread(_query)
+        # Off the loop on a fresh connection; self.alliance_conn belongs to the loop thread.
+        rows = await db.fetchall(
+            db.ALLIANCE,
+            "SELECT alliance_id, name FROM alliance_list WHERE name LIKE ? ORDER BY name LIMIT 20",
+            (f"%{current}%",)
+        )
         return [
             discord.app_commands.Choice(name=row[1], value=str(row[0]))
             for row in rows
@@ -3163,15 +3156,13 @@ class BearTrack(commands.Cog):
             alliance_id = int(alliance_val)
         except (TypeError, ValueError):
             return []
-        def _query():
-            cur = self.users_conn.cursor()
-            cur.execute(
-                "SELECT fid, nickname FROM users WHERE alliance = ? AND nickname LIKE ? "
-                "ORDER BY nickname LIMIT 25",
-                (str(alliance_id), f"%{current}%"),
-            )
-            return cur.fetchall()
-        rows = await asyncio.to_thread(_query)
+        # Off the loop on a fresh connection; self.users_conn belongs to the loop thread.
+        rows = await db.fetchall(
+            db.USERS,
+            "SELECT fid, nickname FROM users WHERE alliance = ? AND nickname LIKE ? "
+            "ORDER BY nickname LIMIT 25",
+            (str(alliance_id), f"%{current}%"),
+        )
         return [
             discord.app_commands.Choice(name=f"{nick} ({fid})", value=str(fid))
             for fid, nick in rows

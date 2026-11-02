@@ -13,6 +13,7 @@ import logging
 import asyncio
 from .notification_event_types import get_event_icon, get_instance_display_name, get_timezone, utc_offset_zone_name
 from .permission_handler import PermissionManager
+from . import db
 from .pimp_my_bot import theme, safe_edit_message, menu_timeout, confirm_timeout, use_guild_theme
 
 class NotificationSchedule(commands.Cog):
@@ -24,15 +25,10 @@ class NotificationSchedule(commands.Cog):
         self.logger.info("[SCHEDULE] Cog initializing...")
 
         # Database connection with timeout to prevent locking
-        self.db_path = 'db/beartime.sqlite'
+        self.db_path = db.BEARTIME
         os.makedirs('db', exist_ok=True)
-        self.conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+        self.conn = db.connect_persistent(self.db_path)
         self.cursor = self.conn.cursor()
-
-        # Enable WAL mode for better concurrency
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=NORMAL")
-        self.conn.commit()
 
         # Create schedule boards table
         self.cursor.execute("""

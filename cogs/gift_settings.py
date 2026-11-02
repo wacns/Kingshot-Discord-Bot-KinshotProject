@@ -4,6 +4,7 @@ import discord
 import sqlite3
 import logging
 
+from . import db
 from .pimp_my_bot import theme, safe_edit_message, check_interaction_user, menu_timeout, confirm_timeout
 from .alliance_member_operations import AllianceSelectView
 from .permission_handler import PermissionManager
@@ -106,7 +107,7 @@ async def get_validation_fid(cog):
             return test_fid, 'test_fid'
 
         # Second try: Use a random alliance member
-        with sqlite3.connect('db/users.sqlite') as users_conn:
+        with db.connect(db.USERS) as users_conn:
             users_cursor = users_conn.cursor()
             users_cursor.execute("""
                 SELECT fid, nickname FROM users
@@ -237,7 +238,7 @@ async def setup_giftcode_auto(cog, interaction: discord.Interaction):
 
     alliances_with_counts = []
     for alliance_id, name in available_alliances:
-        with sqlite3.connect('db/users.sqlite') as users_db:
+        with db.connect(db.USERS) as users_db:
             cursor = users_db.cursor()
             cursor.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,))
             member_count = cursor.fetchone()[0]

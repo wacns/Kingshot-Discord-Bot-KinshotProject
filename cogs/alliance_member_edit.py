@@ -4,11 +4,12 @@ import asyncio
 import logging
 import re
 import sqlite3
-from contextlib import closing, nullcontext
+from contextlib import nullcontext
 from datetime import datetime, timezone
 
 import discord
 
+from . import db
 from . import alliance_power_changes
 from .attendance_ocr_parsers import _parse_compact_int
 from .bot_level_mapping import format_furnace_level, parse_furnace_level, parse_state
@@ -30,7 +31,7 @@ DEFAULT_LOG_AVATAR = "https://gof-formal-avatar.akamaized.net/avatar-dev/2023/07
 
 
 def _stored_avatar_url(fid):
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.USERS) as conn:
         row = conn.execute("SELECT avatar_url FROM users WHERE fid = ?", (fid,)).fetchone()
     return row[0] if row else None
 
@@ -106,7 +107,7 @@ def new_member_name_input(row_name=None, fid=None):
 def _log_change(table: str, fid, old, new):
     """Record a manual edit in the same history the sync used to write."""
     try:
-        with closing(sqlite3.connect('db/changes.sqlite', timeout=30.0)) as conn:
+        with db.connect(db.CHANGES) as conn:
             columns = ("old_nickname", "new_nickname") if table == "nickname_changes" \
                 else ("old_furnace_lv", "new_furnace_lv")
             conn.execute(
@@ -131,7 +132,7 @@ def apply_member_edit(fid, *, nickname=None, furnace_lv=None, kid=None,
     changed, power_changes = [], []
     where, params = ("fid = ?", (fid,)) if alliance_id is None \
         else ("fid = ? AND alliance = ?", (fid, str(alliance_id)))
-    users = closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) if conn is None else nullcontext(conn)
+    users = db.connect(db.USERS) if conn is None else nullcontext(conn)
     with users as conn:
         row = conn.execute(
             f"SELECT nickname, furnace_lv, kid, power, combat_power FROM users WHERE {where}",

@@ -5,11 +5,11 @@ Single view — the code dropdown lives inside it; the filter/pagination control
 stay disabled until a code is picked."""
 
 import asyncio
-import sqlite3
 import logging
 
 import discord
 
+from . import db
 from .pimp_my_bot import theme, safe_edit_message, check_interaction_user, menu_timeout
 from .permission_handler import PermissionManager
 
@@ -62,7 +62,7 @@ def _load_results(giftcode: str, cursor_rows):
     fids = [r[0] for r in cursor_rows]
     users = {}
     if fids:
-        with sqlite3.connect('db/users.sqlite', timeout=30.0) as uconn:
+        with db.connect(db.USERS) as uconn:
             ucur = uconn.cursor()
             for i in range(0, len(fids), 500):
                 chunk = fids[i:i + 500]

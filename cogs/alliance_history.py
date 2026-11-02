@@ -3,9 +3,9 @@ Alliance history cog. Tracks and displays nickname and town center level changes
 """
 import discord
 from discord.ext import commands
-import sqlite3
 import logging
 import re
+from . import db
 from .pimp_my_bot import theme, menu_timeout
 from . import alliance_power_changes
 
@@ -245,7 +245,7 @@ class AllianceHistory(commands.Cog):
 
     async def show_furnace_history(self, interaction: discord.Interaction, fid: int):
         try:
-            with sqlite3.connect('db/changes.sqlite', timeout=30.0) as conn:
+            with db.connect(db.CHANGES) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT old_furnace_lv, new_furnace_lv, change_date
@@ -262,7 +262,7 @@ class AllianceHistory(commands.Cog):
                 )
                 return
 
-            with sqlite3.connect('db/users.sqlite') as users_db:
+            with db.connect(db.USERS) as users_db:
                 cursor = users_db.cursor()
                 cursor.execute(
                     "SELECT nickname, furnace_lv, alliance FROM users WHERE fid = ?",
@@ -310,7 +310,7 @@ class AllianceHistory(commands.Cog):
 
     async def show_nickname_history(self, interaction: discord.Interaction, fid: int):
         try:
-            with sqlite3.connect('db/changes.sqlite', timeout=30.0) as conn:
+            with db.connect(db.CHANGES) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT old_nickname, new_nickname, change_date
@@ -327,7 +327,7 @@ class AllianceHistory(commands.Cog):
                 )
                 return
 
-            with sqlite3.connect('db/users.sqlite') as users_db:
+            with db.connect(db.USERS) as users_db:
                 cursor = users_db.cursor()
                 cursor.execute(
                     "SELECT nickname, furnace_lv, alliance FROM users WHERE fid = ?",
@@ -374,7 +374,7 @@ class AllianceHistory(commands.Cog):
     async def show_member_list_furnace(self, interaction: discord.Interaction, alliance_id: int):
         """Show the member list for town center history selection (skip alliance picker)."""
         try:
-            with sqlite3.connect('db/users.sqlite') as users_db:
+            with db.connect(db.USERS) as users_db:
                 cursor = users_db.cursor()
                 cursor.execute(
                     "SELECT fid, nickname, furnace_lv FROM users "
@@ -390,7 +390,7 @@ class AllianceHistory(commands.Cog):
                 )
                 return
 
-            with sqlite3.connect('db/alliance.sqlite') as alliance_db:
+            with db.connect(db.ALLIANCE) as alliance_db:
                 cursor = alliance_db.cursor()
                 cursor.execute(
                     "SELECT name FROM alliance_list WHERE alliance_id = ?",
@@ -424,7 +424,7 @@ class AllianceHistory(commands.Cog):
     async def show_history_for(self, interaction: discord.Interaction, alliance_id: int):
         """Hub-context entry: pick history type for a known alliance (skip alliance picker)."""
         try:
-            with sqlite3.connect('db/alliance.sqlite') as alliance_db:
+            with db.connect(db.ALLIANCE) as alliance_db:
                 cursor = alliance_db.cursor()
                 cursor.execute(
                     "SELECT name FROM alliance_list WHERE alliance_id = ?",
@@ -464,12 +464,12 @@ class AllianceHistory(commands.Cog):
 
     async def show_member_list_nickname(self, interaction: discord.Interaction, alliance_id: int):
         try:
-            with sqlite3.connect('db/alliance.sqlite') as alliance_db:
+            with db.connect(db.ALLIANCE) as alliance_db:
                 cursor = alliance_db.cursor()
                 cursor.execute("SELECT name FROM alliance_list WHERE alliance_id = ?", (alliance_id,))
                 alliance_name = cursor.fetchone()[0]
 
-            with sqlite3.connect('db/users.sqlite') as users_db:
+            with db.connect(db.USERS) as users_db:
                 cursor = users_db.cursor()
                 cursor.execute("""
                     SELECT fid, nickname, furnace_lv
@@ -526,7 +526,7 @@ class AllianceHistory(commands.Cog):
                 )
                 return
 
-            with sqlite3.connect('db/users.sqlite') as users_db:
+            with db.connect(db.USERS) as users_db:
                 info = users_db.execute(
                     f"SELECT nickname, {col}, alliance FROM users WHERE fid = ?",
                     (fid,),
@@ -579,7 +579,7 @@ class AllianceHistory(commands.Cog):
         col = "combat_power" if metric == "combat_power" else "power"
         icon = theme.chartIcon
         try:
-            with sqlite3.connect('db/users.sqlite') as users_db:
+            with db.connect(db.USERS) as users_db:
                 members = users_db.execute(
                     f"SELECT fid, nickname, {col} FROM users "
                     f"WHERE alliance = ? ORDER BY {col} DESC, nickname",
@@ -593,7 +593,7 @@ class AllianceHistory(commands.Cog):
                 )
                 return
 
-            with sqlite3.connect('db/alliance.sqlite') as alliance_db:
+            with db.connect(db.ALLIANCE) as alliance_db:
                 row = alliance_db.execute(
                     "SELECT name FROM alliance_list WHERE alliance_id = ?",
                     (alliance_id,),
@@ -630,7 +630,7 @@ class AllianceHistory(commands.Cog):
         human_readable_time = f"{match.groups()[0]} {time_dict[match.groups()[1]]}"
         
         try:
-            with sqlite3.connect('db/alliance.sqlite') as alliance_db:
+            with db.connect(db.ALLIANCE) as alliance_db:
                 cursor = alliance_db.cursor()
                 cursor.execute("SELECT alliance_id FROM alliance_list WHERE name = ?", (alliance_name,))
                 row = cursor.fetchone()
@@ -642,7 +642,7 @@ class AllianceHistory(commands.Cog):
                     return
                 alliance_id = row[0]
 
-            with sqlite3.connect('db/users.sqlite') as users_db:
+            with db.connect(db.USERS) as users_db:
                 cursor = users_db.cursor()
                 cursor.execute("""
                     SELECT fid, nickname 
@@ -658,7 +658,7 @@ class AllianceHistory(commands.Cog):
                 )
                 return
 
-            with sqlite3.connect('db/changes.sqlite', timeout=30.0) as conn:
+            with db.connect(db.CHANGES) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT fid, old_furnace_lv, new_furnace_lv, change_date
@@ -701,7 +701,7 @@ class AllianceHistory(commands.Cog):
         human_readable_time = f"{match.groups()[0]} {time_dict[match.groups()[1]]}"
         
         try:
-            with sqlite3.connect('db/alliance.sqlite') as alliance_db:
+            with db.connect(db.ALLIANCE) as alliance_db:
                 cursor = alliance_db.cursor()
                 cursor.execute("SELECT alliance_id FROM alliance_list WHERE name = ?", (alliance_name,))
                 row = cursor.fetchone()
@@ -713,7 +713,7 @@ class AllianceHistory(commands.Cog):
                     return
                 alliance_id = row[0]
 
-            with sqlite3.connect('db/users.sqlite') as users_db:
+            with db.connect(db.USERS) as users_db:
                 cursor = users_db.cursor()
                 cursor.execute("""
                     SELECT fid, nickname 
@@ -729,7 +729,7 @@ class AllianceHistory(commands.Cog):
                 )
                 return
 
-            with sqlite3.connect('db/changes.sqlite', timeout=30.0) as conn:
+            with db.connect(db.CHANGES) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT fid, old_nickname, new_nickname, change_date

@@ -21,6 +21,8 @@
 !.gitattributes
 !requirements-dev.txt
 !ruff.toml
+!docs/
+!docs/**
 !tests/
 !tests/**
 tests/sim/gallery/

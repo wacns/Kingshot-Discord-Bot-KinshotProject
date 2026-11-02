@@ -1752,11 +1752,11 @@ if __name__ == "__main__":
             # Summary with per-alliance breakdown
             alliance_details = []
             try:
-                import sqlite3 as _sq
-                with _sq.connect('db/alliance.sqlite') as _c:
+                from cogs import db
+                with db.connect(db.ALLIANCE) as _c:
                     alliances = _c.execute("SELECT alliance_id, name FROM alliance_list ORDER BY name").fetchall()
                     alliance_count = len(alliances)
-                with _sq.connect('db/users.sqlite') as _c:
+                with db.connect(db.USERS) as _c:
                     member_count = _c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
                     for aid, name in alliances:
                         count = _c.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (aid,)).fetchone()[0]

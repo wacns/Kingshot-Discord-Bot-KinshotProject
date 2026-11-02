@@ -2,11 +2,10 @@
 import asyncio
 import json
 import logging
-import sqlite3
 import threading
 import time
 from collections import Counter
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -14,6 +13,7 @@ import aiohttp
 import discord
 from discord.ext import commands, tasks
 
+from . import db
 from .alliance_member_edit import apply_member_edit, enqueue_catchups, new_member_name, parse_power
 from .bot_level_mapping import format_furnace_level, parse_furnace_level, parse_state
 from .gift_redemption import apply_removals, auto_remove_on, maybe_remove_transferred_member, rate_limit_delay
@@ -191,8 +191,8 @@ async def fetch_player(session: aiohttp.ClientSession, profile: dict, key: str, 
 
 # --- Storage: settings, the daily request count and when members last synced ----------
 
-USERS_DB = 'db/users.sqlite'
-SETTINGS_DB = 'db/settings.sqlite'
+USERS_DB = db.USERS
+SETTINGS_DB = db.SETTINGS
 INTERVAL_DEFAULT_HOURS = 24
 INTERVAL_MIN_HOURS = 1
 INTERVAL_MAX_HOURS = 720
@@ -296,7 +296,7 @@ _BUDGET_LOCK = threading.Lock()
 def take_request(today: str, per_day=None) -> bool:
     """Counts one request on one settings connection; False, uncounted, once `per_day` are used today."""
     key = SETTINGS["budget"][0]
-    with _BUDGET_LOCK, closing(sqlite3.connect(SETTINGS_DB, timeout=30.0)) as conn:
+    with _BUDGET_LOCK, db.connect(SETTINGS_DB) as conn:
         row = conn.execute("SELECT setting_value FROM bot_global_settings WHERE setting_key = ?", (key,)).fetchone()
         used = used_today(_json_dict(row[0] if row else None), today)
         if per_day is not None and used >= per_day:
@@ -324,7 +324,7 @@ def members_to_sync(alliance_id=None, before=None) -> list:
         where, params = "alliance = ?", (str(alliance_id),)
     if before is not None:
         where, params = f"{where} AND (api_synced_at IS NULL OR api_synced_at < ?)", params + (before,)
-    with closing(sqlite3.connect(USERS_DB, timeout=30.0)) as conn:
+    with db.connect(USERS_DB) as conn:
         return conn.execute(
             f"SELECT fid, alliance FROM users WHERE {where} "
             f"ORDER BY api_synced_at IS NOT NULL, api_synced_at, fid", params).fetchall()
@@ -336,7 +336,7 @@ def _users(conn=None):
     if conn is not None:
         yield conn
         return
-    with closing(sqlite3.connect(USERS_DB, timeout=30.0)) as own:
+    with db.connect(USERS_DB) as own:
         yield own
         own.commit()
 
@@ -360,18 +360,18 @@ def save_avatar(fid, url: str, conn=None) -> None:
         users.execute("UPDATE users SET avatar_url = ? WHERE fid = ?", (url, fid))
 
 
-ALLIANCE_DB = 'db/alliance.sqlite'
+ALLIANCE_DB = db.ALLIANCE
 
 
 def sync_channels() -> dict:
-    with closing(sqlite3.connect(ALLIANCE_DB, timeout=30.0)) as conn:
+    with db.connect(ALLIANCE_DB) as conn:
         rows = conn.execute("SELECT alliance_id, channel_id FROM alliancesettings "
                             "WHERE channel_id IS NOT NULL AND channel_id != 0").fetchall()
     return {str(alliance_id): int(channel_id) for alliance_id, channel_id in rows}
 
 
 def set_sync_channel(alliance_id, channel_id: int) -> None:
-    with closing(sqlite3.connect(ALLIANCE_DB, timeout=30.0)) as conn:
+    with db.connect(ALLIANCE_DB) as conn:
         conn.execute("INSERT INTO alliancesettings (alliance_id, channel_id) VALUES (?, ?) "
                      "ON CONFLICT(alliance_id) DO UPDATE SET channel_id = excluded.channel_id",
                      (int(alliance_id), int(channel_id)))
@@ -379,7 +379,7 @@ def set_sync_channel(alliance_id, channel_id: int) -> None:
 
 
 def clear_sync_channel(alliance_id) -> None:
-    with closing(sqlite3.connect(ALLIANCE_DB, timeout=30.0)) as conn:
+    with db.connect(ALLIANCE_DB) as conn:
         conn.execute("UPDATE alliancesettings SET channel_id = NULL WHERE alliance_id = ?", (int(alliance_id),))
         conn.commit()
 
@@ -545,7 +545,7 @@ def _write_member(conn, fid, alliance, before, values, result):
 
 
 def _apply(fid, alliance, values, result):
-    with closing(sqlite3.connect(USERS_DB, timeout=30.0)) as conn:
+    with db.connect(USERS_DB) as conn:
         before = member_snapshot(fid, conn)
         if before is not None:
             _write_member(conn, fid, alliance, before, values, result)
@@ -729,7 +729,7 @@ async def look_up_new_member(bot, fid, alliance_id, name=None, level=None, *, pr
 
 
 def _store_api_values(member: NewMember, fid):
-    with closing(sqlite3.connect(USERS_DB, timeout=30.0)) as conn:
+    with db.connect(USERS_DB) as conn:
         if member.avatar_url:
             save_avatar(fid, member.avatar_url, conn)
         apply_member_edit(fid, power=member.power, conn=conn)
