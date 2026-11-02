@@ -87,11 +87,13 @@ like `cogs/browser_headers.py` and `cogs/gift_state_resolver.py` today. It provi
 has now, so no existing user file changes on disk:
 
 - WAL + `synchronous=NORMAL` (already set somewhere today): `users`, `settings`, `alliance`,
-  `svs`, `giftcode`, `beartime`, `bear_data`, `ocr_resume`. Applying it on every connection
+  `svs`, `giftcode`, `beartime`, `bear_data`, `ocr_resume`, `changes` (`bear_track.py`'s
+  `_open_db` switches `changes` to WAL on every load — corrected 2026-11-02 while planning). Applying it on every connection
   is a no-op once the file is in WAL and removes the dependence on which cog opens it first.
-- No pragmas (never switched today): `attendance`, `id_channel`, `changes`, `pimpmybot`, `backup`.
+- No pragmas (never switched today): `attendance`, `id_channel`, `pimpmybot`, `backup`.
+  (Bot Health's monthly optimization would switch them, but it is off by default.)
 
-Switching the remaining five to WAL is out of scope: it changes users' files on disk
+Switching the remaining four to WAL is out of scope: it changes users' files on disk
 (`-wal`/`-shm` side files) and would need the restore instructions in
 `cogs/bot_backup.py` (~line 342, "Replace your db/ folder contents") to warn about stale
 `-wal` files. It can be its own later decision.
