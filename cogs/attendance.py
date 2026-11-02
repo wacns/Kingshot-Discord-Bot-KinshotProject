@@ -9,6 +9,7 @@ import asyncio
 from datetime import datetime
 import os
 import uuid
+from . import db
 from .permission_handler import PermissionManager
 from .pimp_my_bot import theme, menu_timeout, confirm_timeout
 from .bot_level_mapping import LEVEL_MAPPING as FC_LEVEL_MAPPING
@@ -787,8 +788,8 @@ class EditEventDetailsView(discord.ui.View):
             return
         alliance_id = getattr(self.parent_view, "alliance_id", None)
         if not alliance_id:
-            with sqlite3.connect("db/attendance.sqlite") as db:
-                row = db.execute(
+            with db.connect(db.ATTENDANCE) as dbc:
+                row = dbc.execute(
                     "SELECT alliance_id FROM attendance_sessions WHERE session_id = ?",
                     (self.session_id,)).fetchone()
             alliance_id = int(row[0]) if row and row[0] else None
@@ -832,14 +833,14 @@ class EditEventDetailsView(discord.ui.View):
                 event_date = datetime.utcnow()
 
             # Update the database
-            with sqlite3.connect('db/attendance.sqlite') as db:
-                cursor = db.cursor()
+            with db.connect(db.ATTENDANCE) as dbc:
+                cursor = dbc.cursor()
                 cursor.execute("""
                     UPDATE attendance_records
                     SET event_type = ?, event_subtype = ?, event_date = ?
                     WHERE session_id = ?
                 """, (event_type, event_subtype, event_date.isoformat(), self.session_id))
-                db.commit()
+                dbc.commit()
 
             # Update parent view and refresh
             self.parent_view.event_type = event_type
@@ -958,14 +959,14 @@ class RenameSessionModal(discord.ui.Modal, title="Rename Session"):
                 return
                 
             # Update session name in database
-            with sqlite3.connect('db/attendance.sqlite') as db:
-                cursor = db.cursor()
+            with db.connect(db.ATTENDANCE) as dbc:
+                cursor = dbc.cursor()
                 cursor.execute("""
                     UPDATE attendance_records 
                     SET session_name = ? 
                     WHERE session_id = ?
                 """, (new_name, self.session_id))
-                db.commit()
+                dbc.commit()
                 
             # Update parent views
             self.parent_view.session_name = new_name
@@ -1688,8 +1689,8 @@ class Attendance(commands.Cog):
 
     async def _get_alliance_name(self, alliance_id):
         """Helper to get alliance name"""
-        with sqlite3.connect('db/alliance.sqlite') as db:
-            cursor = db.cursor()
+        with db.connect(db.ALLIANCE) as dbc:
+            cursor = dbc.cursor()
             cursor.execute("SELECT name FROM alliance_list WHERE alliance_id = ?", (alliance_id,))
             result = cursor.fetchone()
             return result[0] if result else "Unknown Alliance"
@@ -1704,8 +1705,8 @@ class Attendance(commands.Cog):
             raise ValueError("Invalid alliance IDs detected - all IDs must be integers")
 
         if alliance_ids:
-            with sqlite3.connect('db/users.sqlite') as db:
-                cursor = db.cursor()
+            with db.connect(db.USERS) as dbc:
+                cursor = dbc.cursor()
                 placeholders = ','.join('?' * len(alliance_ids))
                 cursor.execute(f"""
                     SELECT alliance, COUNT(*)
@@ -1725,8 +1726,8 @@ class Attendance(commands.Cog):
     async def get_user_report_preference(self, user_id):
         """Get user's report preference"""
         try:
-            with sqlite3.connect('db/attendance.sqlite') as db:
-                cursor = db.cursor()
+            with db.connect(db.ATTENDANCE) as dbc:
+                cursor = dbc.cursor()
                 cursor.execute("""
                     SELECT report_type FROM user_preferences 
                     WHERE user_id = ?
@@ -1739,14 +1740,14 @@ class Attendance(commands.Cog):
     async def set_user_report_preference(self, user_id, preference):
         """Set user's report preference"""
         try:
-            with sqlite3.connect('db/attendance.sqlite') as db:
-                cursor = db.cursor()
+            with db.connect(db.ATTENDANCE) as dbc:
+                cursor = dbc.cursor()
                 cursor.execute("""
                     INSERT INTO user_preferences (user_id, report_type)
                     VALUES (?, ?)
                     ON CONFLICT(user_id) DO UPDATE SET report_type = excluded.report_type
                 """, (user_id, preference))
-                db.commit()
+                dbc.commit()
         except Exception:
             raise
 
@@ -1754,11 +1755,12 @@ class Attendance(commands.Cog):
         """Set up simplified attendance database with single table"""
         try:
             # Create attendance database if it doesn't exist
-            if not os.path.exists("db/attendance.sqlite"):
+            if not os.path.exists(db.ATTENDANCE):
                 os.makedirs("db", exist_ok=True)
-                sqlite3.connect("db/attendance.sqlite").close()
+                with db.connect(db.ATTENDANCE):
+                    pass
             
-            with sqlite3.connect('db/attendance.sqlite') as attendance_db:
+            with db.connect(db.ATTENDANCE) as attendance_db:
                 cursor = attendance_db.cursor()
                 
                 # Create unified attendance records table
@@ -2045,8 +2047,8 @@ class Attendance(commands.Cog):
 
             # Query database for sessions of this alliance from single table
             sessions = []
-            with sqlite3.connect('db/attendance.sqlite') as db:
-                cursor = db.cursor()
+            with db.connect(db.ATTENDANCE) as dbc:
+                cursor = dbc.cursor()
                 cursor.execute("""
                     SELECT
                         session_id,
@@ -2115,8 +2117,8 @@ class Attendance(commands.Cog):
             players = []
             attendance_records = {}
             
-            with sqlite3.connect('db/users.sqlite') as db:
-                cursor = db.cursor()
+            with db.connect(db.USERS) as dbc:
+                cursor = dbc.cursor()
                 cursor.execute("""
                     SELECT fid, nickname, furnace_lv 
                     FROM users 
@@ -2127,8 +2129,8 @@ class Attendance(commands.Cog):
             
             # If editing existing session, get attendance records
             if is_edit and session_id:
-                with sqlite3.connect('db/attendance.sqlite') as db:
-                    cursor = db.cursor()
+                with db.connect(db.ATTENDANCE) as dbc:
+                    cursor = dbc.cursor()
                     # OCR sessions hold rich data the legacy Mark UI can't show;
                     # reopen them in the post-upload review editor instead.
                     cursor.execute(
@@ -2281,13 +2283,13 @@ class Attendance(commands.Cog):
                 session_id = str(uuid.uuid4())
 
             # Save attendance records
-            with sqlite3.connect('db/attendance.sqlite') as db:
-                cursor = db.cursor()
+            with db.connect(db.ATTENDANCE) as dbc:
+                cursor = dbc.cursor()
                 
                 # First, if creating new session, insert all players as not_recorded
                 if not is_edit:
                     # Get all alliance members
-                    with sqlite3.connect('db/users.sqlite') as users_db:
+                    with db.connect(db.USERS) as users_db:
                         users_cursor = users_db.cursor()
                         users_cursor.execute("""
                             SELECT fid, nickname, furnace_lv 
@@ -2358,7 +2360,7 @@ class Attendance(commands.Cog):
                                 str(interaction.user.id), interaction.user.name
                             ))
                 
-                db.commit()
+                dbc.commit()
             
             # Show completion report based on user preference
             if hasattr(interaction, 'guild') and interaction.guild:
@@ -2369,7 +2371,7 @@ class Attendance(commands.Cog):
                 total_players = len(all_members)
             else:
                 # For edit mode, get total count from the database
-                with sqlite3.connect('db/users.sqlite') as users_db:
+                with db.connect(db.USERS) as users_db:
                     users_cursor = users_db.cursor()
                     users_cursor.execute("""
                         SELECT COUNT(*) FROM users WHERE alliance = ?

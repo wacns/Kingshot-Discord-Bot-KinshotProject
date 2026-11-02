@@ -3,7 +3,6 @@ Attendance report generator. Produces charts and summaries using matplotlib.
 """
 import discord
 from discord.ext import commands
-import sqlite3
 import logging
 from datetime import datetime
 import re
@@ -11,6 +10,7 @@ import csv
 import io
 from io import BytesIO
 import os
+from . import db
 from .attendance import SessionSelectView, event_type_display
 from .bear_track import _reshape_for_chart
 from .pimp_my_bot import theme, menu_timeout
@@ -142,8 +142,8 @@ class AttendanceReport(commands.Cog):
 
     async def _get_alliance_name(self, alliance_id):
         """Helper to get alliance name"""
-        with sqlite3.connect('db/alliance.sqlite') as db:
-            cursor = db.cursor()
+        with db.connect(db.ALLIANCE) as dbc:
+            cursor = dbc.cursor()
             cursor.execute("SELECT name FROM alliance_list WHERE alliance_id = ?", (alliance_id,))
             result = cursor.fetchone()
             return result[0] if result else "Unknown Alliance"
@@ -151,8 +151,8 @@ class AttendanceReport(commands.Cog):
     def _resolve_session_id(self, alliance_id, session_name):
         """Session id for this alliance's session by name, or None."""
         try:
-            with sqlite3.connect('db/attendance.sqlite') as db:
-                row = db.execute(
+            with db.connect(db.ATTENDANCE) as dbc:
+                row = dbc.execute(
                     "SELECT session_id FROM attendance_records "
                     "WHERE session_name = ? AND alliance_id = ? LIMIT 1",
                     (session_name, str(alliance_id))).fetchone()
@@ -190,8 +190,8 @@ class AttendanceReport(commands.Cog):
     async def get_user_report_preference(self, user_id):
         """Get user's report preference"""
         try:
-            with sqlite3.connect('db/attendance.sqlite') as db:
-                cursor = db.cursor()
+            with db.connect(db.ATTENDANCE) as dbc:
+                cursor = dbc.cursor()
                 cursor.execute("""
                     SELECT report_type FROM user_preferences
                     WHERE user_id = ?
@@ -204,8 +204,8 @@ class AttendanceReport(commands.Cog):
     async def get_user_sort_preference(self, user_id):
         """Get user's sort preference"""
         try:
-            with sqlite3.connect('db/attendance.sqlite') as db:
-                cursor = db.cursor()
+            with db.connect(db.ATTENDANCE) as dbc:
+                cursor = dbc.cursor()
                 cursor.execute("""
                     SELECT sort_preference FROM user_preferences
                     WHERE user_id = ?
@@ -218,8 +218,8 @@ class AttendanceReport(commands.Cog):
     async def set_user_sort_preference(self, user_id, sort_type):
         """Set user's sort preference"""
         try:
-            with sqlite3.connect('db/attendance.sqlite') as db:
-                cursor = db.cursor()
+            with db.connect(db.ATTENDANCE) as dbc:
+                cursor = dbc.cursor()
                 cursor.execute("SELECT user_id FROM user_preferences WHERE user_id = ?", (user_id,))
                 exists = cursor.fetchone()
 
@@ -235,7 +235,7 @@ class AttendanceReport(commands.Cog):
                         VALUES (?, ?)
                     """, (user_id, sort_type))
 
-                db.commit()
+                dbc.commit()
                 return True
         except Exception as e:
             logger.error(f"Error setting sort preference: {e}")
@@ -715,7 +715,7 @@ class AttendanceReport(commands.Cog):
                 records = []
                 event_type = None
                 event_date = None
-                with sqlite3.connect('db/attendance.sqlite') as attendance_db:
+                with db.connect(db.ATTENDANCE) as attendance_db:
                     cursor = attendance_db.cursor()
                     if session_id:
                         # Use session_id if provided (more specific)
@@ -1015,8 +1015,8 @@ class AttendanceReport(commands.Cog):
     async def fetch_last_event_attendance(self, player_id: str, event_type: str, event_date: str, session_id: str):
         """Fetch the last attendance for a player of the same event type before the current event date"""
         try:
-            with sqlite3.connect('db/attendance.sqlite') as db:
-                cursor = db.cursor()
+            with db.connect(db.ATTENDANCE) as dbc:
+                cursor = dbc.cursor()
                 # Get the last attendance of the same event type before the current event date
                 cursor.execute("""
                     SELECT status, event_date 
@@ -1115,7 +1115,7 @@ class AttendanceReport(commands.Cog):
                 records = []
                 event_type = None
                 event_date = None
-                with sqlite3.connect('db/attendance.sqlite') as attendance_db:
+                with db.connect(db.ATTENDANCE) as attendance_db:
                     cursor = attendance_db.cursor()
                     if session_id:
                         # Use session_id if provided (more specific)
@@ -1185,7 +1185,7 @@ class AttendanceReport(commands.Cog):
             # Get session ID from attendance records if not provided
             if not session_id:
                 try:
-                    with sqlite3.connect('db/attendance.sqlite') as attendance_db:
+                    with db.connect(db.ATTENDANCE) as attendance_db:
                         cursor = attendance_db.cursor()
                         cursor.execute("""
                             SELECT DISTINCT session_id FROM attendance_records
@@ -1434,7 +1434,7 @@ class AttendanceReport(commands.Cog):
         try:
             # Get alliance name
             alliance_name = "Unknown Alliance"
-            with sqlite3.connect('db/alliance.sqlite') as alliance_db:
+            with db.connect(db.ALLIANCE) as alliance_db:
                 cursor = alliance_db.cursor()
                 cursor.execute("SELECT name FROM alliance_list WHERE alliance_id = ?", (alliance_id,))
                 alliance_result = cursor.fetchone()
@@ -1443,7 +1443,7 @@ class AttendanceReport(commands.Cog):
         
             # Get session details from single attendance_records table
             sessions = []
-            with sqlite3.connect('db/attendance.sqlite') as attendance_db:
+            with db.connect(db.ATTENDANCE) as attendance_db:
                 cursor = attendance_db.cursor()
                 cursor.execute("""
                     SELECT 

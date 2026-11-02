@@ -1,23 +1,22 @@
 """Admin UI + DB helpers for per-channel OCR config: alliance owner, accepted event types, info-message toggles."""
 from __future__ import annotations
-import sqlite3
-from contextlib import closing
 from typing import Optional
 
 import discord
 
+from . import db
 from .pimp_my_bot import theme, menu_timeout
 from .permission_handler import EDITOR_MODES, editor_mode_label, next_editor_mode
 from .permission_handler import PermissionManager
 from .attendance_ocr_parsers import EVENT_TYPES
 
-_SETTINGS_DB = "db/settings.sqlite"
+_SETTINGS_DB = db.SETTINGS
 
 
 # ── channel-config DB helpers ─────────────────────────────────────────────
 
 def get_channel_settings(channel_id: int) -> Optional[dict]:
-    with sqlite3.connect(_SETTINGS_DB, timeout=30.0) as conn:
+    with db.connect(_SETTINGS_DB) as conn:
         row = conn.execute(
             "SELECT channel_id, alliance_id, post_info_message, pin_info_message, "
             "info_message_id, auto_delete_screenshots "
@@ -37,7 +36,7 @@ def get_channel_settings(channel_id: int) -> Optional[dict]:
 
 
 def set_auto_delete_screenshots(channel_id: int, value: bool) -> None:
-    with sqlite3.connect(_SETTINGS_DB, timeout=30.0) as conn:
+    with db.connect(_SETTINGS_DB) as conn:
         conn.execute(
             "UPDATE ocr_channel_settings SET auto_delete_screenshots = ? WHERE channel_id = ?",
             (int(value), channel_id),
@@ -48,7 +47,7 @@ def set_auto_delete_screenshots(channel_id: int, value: bool) -> None:
 def upsert_channel_settings(channel_id: int, alliance_id: int,
                             post_info_message: bool = False,
                             pin_info_message: bool = False) -> None:
-    with sqlite3.connect(_SETTINGS_DB, timeout=30.0) as conn:
+    with db.connect(_SETTINGS_DB) as conn:
         conn.execute(
             "INSERT INTO ocr_channel_settings "
             "(channel_id, alliance_id, post_info_message, pin_info_message) "
@@ -63,7 +62,7 @@ def upsert_channel_settings(channel_id: int, alliance_id: int,
 
 
 def set_info_message_id(channel_id: int, message_id: Optional[int]) -> None:
-    with sqlite3.connect(_SETTINGS_DB, timeout=30.0) as conn:
+    with db.connect(_SETTINGS_DB) as conn:
         conn.execute(
             "UPDATE ocr_channel_settings SET info_message_id = ? WHERE channel_id = ?",
             (message_id, channel_id),
@@ -72,14 +71,14 @@ def set_info_message_id(channel_id: int, message_id: Optional[int]) -> None:
 
 
 def delete_channel_settings(channel_id: int) -> None:
-    with sqlite3.connect(_SETTINGS_DB, timeout=30.0) as conn:
+    with db.connect(_SETTINGS_DB) as conn:
         conn.execute("DELETE FROM ocr_channel_settings WHERE channel_id = ?", (channel_id,))
         conn.execute("DELETE FROM ocr_channel_event_keywords WHERE channel_id = ?", (channel_id,))
         conn.commit()
 
 
 def get_channel_keywords(channel_id: int) -> dict[str, list[str]]:
-    with sqlite3.connect(_SETTINGS_DB, timeout=30.0) as conn:
+    with db.connect(_SETTINGS_DB) as conn:
         rows = conn.execute(
             "SELECT event_type, keyword FROM ocr_channel_event_keywords "
             "WHERE channel_id = ? ORDER BY event_type, keyword",
@@ -93,7 +92,7 @@ def get_channel_keywords(channel_id: int) -> dict[str, list[str]]:
 
 def set_event_keywords(channel_id: int, event_type: str, keywords: list[str]) -> None:
     keywords = [k.strip() for k in keywords if k.strip()]
-    with sqlite3.connect(_SETTINGS_DB, timeout=30.0) as conn:
+    with db.connect(_SETTINGS_DB) as conn:
         conn.execute(
             "DELETE FROM ocr_channel_event_keywords WHERE channel_id = ? AND event_type = ?",
             (channel_id, event_type),
@@ -108,7 +107,7 @@ def set_event_keywords(channel_id: int, event_type: str, keywords: list[str]) ->
 
 def get_enabled_events(channel_id: int) -> list[str]:
     """Return event_types enabled on this channel, in EVENT_TYPES order."""
-    with sqlite3.connect(_SETTINGS_DB, timeout=30.0) as conn:
+    with db.connect(_SETTINGS_DB) as conn:
         rows = conn.execute(
             "SELECT event_type FROM ocr_channel_enabled_events WHERE channel_id = ?",
             (channel_id,),
@@ -119,7 +118,7 @@ def get_enabled_events(channel_id: int) -> list[str]:
 
 def enable_event_for_channel(channel_id: int, event_type: str) -> None:
     """Mark event_type as enabled on this channel. Idempotent. Does not add keywords."""
-    with sqlite3.connect(_SETTINGS_DB, timeout=30.0) as conn:
+    with db.connect(_SETTINGS_DB) as conn:
         conn.execute(
             "INSERT OR IGNORE INTO ocr_channel_enabled_events "
             "(channel_id, event_type) VALUES (?, ?)",
@@ -130,7 +129,7 @@ def enable_event_for_channel(channel_id: int, event_type: str) -> None:
 
 def disable_event_for_channel(channel_id: int, event_type: str) -> None:
     """Disable event_type on this channel and clear any keywords stored for it."""
-    with sqlite3.connect(_SETTINGS_DB, timeout=30.0) as conn:
+    with db.connect(_SETTINGS_DB) as conn:
         conn.execute(
             "DELETE FROM ocr_channel_enabled_events WHERE channel_id = ? AND event_type = ?",
             (channel_id, event_type),
@@ -144,7 +143,7 @@ def disable_event_for_channel(channel_id: int, event_type: str) -> None:
 
 def get_ocr_upload_admin_only(alliance_id: int) -> bool:
     """Read the per-alliance "admins only can upload" gate."""
-    with sqlite3.connect("db/alliance.sqlite", timeout=30.0) as conn:
+    with db.connect(db.ALLIANCE) as conn:
         row = conn.execute(
             "SELECT ocr_upload_admin_only FROM alliancesettings WHERE alliance_id = ?",
             (alliance_id,),
@@ -154,7 +153,7 @@ def get_ocr_upload_admin_only(alliance_id: int) -> bool:
 
 def set_ocr_upload_admin_only(alliance_id: int, value: bool) -> None:
     """Write the per-alliance "admins only" gate. INSERTs the row if missing."""
-    with sqlite3.connect("db/alliance.sqlite", timeout=30.0) as conn:
+    with db.connect(db.ALLIANCE) as conn:
         conn.execute(
             "INSERT INTO alliancesettings (alliance_id, ocr_upload_admin_only) "
             "VALUES (?, ?) "
@@ -166,7 +165,7 @@ def set_ocr_upload_admin_only(alliance_id: int, value: bool) -> None:
 
 def get_ocr_review_editors(alliance_id: int) -> str:
     """Who may edit an open screenshot review for this alliance: uploader, admins or anyone."""
-    with closing(sqlite3.connect("db/alliance.sqlite", timeout=30.0)) as conn:
+    with db.connect(db.ALLIANCE) as conn:
         row = conn.execute(
             "SELECT ocr_review_editors FROM alliancesettings WHERE alliance_id = ?", (alliance_id,),
         ).fetchone()
@@ -176,7 +175,7 @@ def get_ocr_review_editors(alliance_id: int) -> str:
 def set_ocr_review_editors(alliance_id: int, mode: str) -> None:
     if mode not in EDITOR_MODES:
         raise ValueError(f"unknown review editor mode: {mode}")
-    with closing(sqlite3.connect("db/alliance.sqlite", timeout=30.0)) as conn:
+    with db.connect(db.ALLIANCE) as conn:
         conn.execute(
             "INSERT INTO alliancesettings (alliance_id, ocr_review_editors) VALUES (?, ?) "
             "ON CONFLICT(alliance_id) DO UPDATE SET ocr_review_editors = excluded.ocr_review_editors",
@@ -190,7 +189,7 @@ def find_conflicting_channel_owner(channel_id: int, requesting_alliance_id: int)
     already claims this channel for OCR (Bear or Screenshot Upload), or
     None if it's free. Re-picking by the same alliance is not a conflict.
     """
-    with sqlite3.connect("db/alliance.sqlite", timeout=30.0) as conn:
+    with db.connect(db.ALLIANCE) as conn:
         row = conn.execute(
             "SELECT a.alliance_id, l.name FROM alliancesettings a "
             "LEFT JOIN alliance_list l ON l.alliance_id = a.alliance_id "
@@ -199,7 +198,7 @@ def find_conflicting_channel_owner(channel_id: int, requesting_alliance_id: int)
         ).fetchone()
         if row:
             return ("Bear Tracking", int(row[0]), row[1] or f"#{row[0]}")
-    with sqlite3.connect(_SETTINGS_DB, timeout=30.0) as conn:
+    with db.connect(_SETTINGS_DB) as conn:
         row = conn.execute(
             "SELECT alliance_id FROM ocr_channel_settings "
             "WHERE channel_id = ? AND alliance_id != ? LIMIT 1",
@@ -298,14 +297,14 @@ def render_info_message(channel_id: int) -> str:
 def _admin_alliance_ids(user_id: int, guild_id: int) -> list[int]:
     ids, is_global = PermissionManager.get_admin_alliance_ids(user_id, guild_id)
     if is_global:
-        with sqlite3.connect("db/alliance.sqlite", timeout=30.0) as conn:
+        with db.connect(db.ALLIANCE) as conn:
             rows = conn.execute("SELECT alliance_id FROM alliance_list").fetchall()
         return [int(r[0]) for r in rows]
     return [int(a) for a in ids]
 
 
 def _alliance_name(alliance_id: int) -> str:
-    with sqlite3.connect("db/alliance.sqlite", timeout=30.0) as conn:
+    with db.connect(db.ALLIANCE) as conn:
         row = conn.execute(
             "SELECT name FROM alliance_list WHERE alliance_id = ?",
             (alliance_id,),
@@ -317,7 +316,7 @@ def _all_configured_channels(allowed_alliance_ids: list[int]) -> list[dict]:
     if not allowed_alliance_ids:
         return []
     placeholders = ",".join("?" * len(allowed_alliance_ids))
-    with sqlite3.connect(_SETTINGS_DB, timeout=30.0) as conn:
+    with db.connect(_SETTINGS_DB) as conn:
         rows = conn.execute(
             f"SELECT channel_id, alliance_id, post_info_message, pin_info_message "
             f"FROM ocr_channel_settings WHERE alliance_id IN ({placeholders}) "
@@ -984,7 +983,7 @@ class _KeywordsView(discord.ui.View):
     async def _reset_all(self, interaction: discord.Interaction):
         # Clear every keyword for this channel. Events stay enabled and fall
         # back to fingerprint-only detection.
-        with sqlite3.connect(_SETTINGS_DB, timeout=30.0) as conn:
+        with db.connect(_SETTINGS_DB) as conn:
             conn.execute(
                 "DELETE FROM ocr_channel_event_keywords WHERE channel_id = ?",
                 (self.channel_id,),
