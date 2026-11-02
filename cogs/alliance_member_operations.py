@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import os
 import csv
 import io
-from contextlib import closing
+from . import db
 from .permission_handler import PermissionManager
 from .pimp_my_bot import theme, safe_edit_message, menu_timeout, confirm_timeout, plural
 from .process_queue import MEMBER_ADD, PreemptedException
@@ -59,7 +59,7 @@ def _split_by_state_lock(alliance_id, fids):
     if locked_kid is None or not fids:
         return True, locked_kid, list(fids), []
     placeholders = ",".join("?" * len(fids))
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as users_db:
+    with db.connect(db.USERS) as users_db:
         rows = users_db.execute(
             f"SELECT fid, nickname, kid FROM users WHERE fid IN ({placeholders})", list(fids)
         ).fetchall()
@@ -543,8 +543,8 @@ class MemberListView(discord.ui.View):
             for key in ('power', 'power_updated_at', 'combat_power', 'combat_power_updated_at'):
                 m.setdefault(key, None)
         try:
-            with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as db:
-                rows = db.execute(
+            with db.connect(db.USERS) as dbc:
+                rows = dbc.execute(
                     "SELECT fid, nickname, furnace_lv, kid, power, power_updated_at, "
                     "combat_power, combat_power_updated_at FROM users WHERE alliance = ?",
                     (str(self.alliance_id),)).fetchall()
@@ -954,8 +954,8 @@ class ManageMembersView(MemberListView):
 
     def _known_fids(self) -> set:
         try:
-            with sqlite3.connect('db/users.sqlite', timeout=30.0) as db:
-                return {str(r[0]) for r in db.execute("SELECT fid FROM users").fetchall()}
+            with db.connect(db.USERS) as dbc:
+                return {str(r[0]) for r in dbc.execute("SELECT fid FROM users").fetchall()}
         except sqlite3.Error as e:
             logger.warning(f"Member import: could not read existing IDs: {e}")
             return set()
@@ -1014,7 +1014,7 @@ class ManageMembersView(MemberListView):
             try:
                 target_alliance_id = int(target_select.values[0])
                 fids = list(parent_view.pending_selections)
-                with sqlite3.connect('db/alliance.sqlite') as alliance_db:
+                with db.connect(db.ALLIANCE) as alliance_db:
                     cur = alliance_db.cursor()
                     cur.execute(
                         "SELECT name FROM alliance_list WHERE alliance_id = ?",
@@ -1027,7 +1027,7 @@ class ManageMembersView(MemberListView):
                     await target_interaction.response.edit_message(
                         embed=_no_members_moved_embed(lock_ok, target_name, locked_kid, skipped), view=None)
                     return
-                with sqlite3.connect('db/users.sqlite') as users_db:
+                with db.connect(db.USERS) as users_db:
                     cur = users_db.cursor()
                     placeholders = ",".join("?" * len(fids))
                     cur.execute(
@@ -1124,7 +1124,7 @@ class ManageMembersView(MemberListView):
 async def _post_alliance_log(bot, alliance_id, embed) -> None:
     """Send an embed to the alliance's configured Activity Log channel, if set."""
     try:
-        with sqlite3.connect('db/settings.sqlite', timeout=30.0) as conn:
+        with db.connect(db.SETTINGS) as conn:
             row = conn.execute(
                 "SELECT channel_id FROM alliance_logs WHERE alliance_id = ?",
                 (alliance_id,),
@@ -1181,7 +1181,7 @@ class _RemoveSelectedConfirmView(discord.ui.View):
         try:
             removed = set(fids)
             removed_rows = [m for m in self.parent_view.all_members if m['fid'] in removed]
-            with sqlite3.connect('db/users.sqlite') as users_db:
+            with db.connect(db.USERS) as users_db:
                 cur = users_db.cursor()
                 placeholders = ",".join("?" * len(fids))
                 cur.execute(
@@ -1268,7 +1268,7 @@ class AllianceMemberOperations(commands.Cog):
 
     async def show_power_rankings_for(self, interaction: discord.Interaction, alliance_id: int):
         """Show the alliance roster sorted by Power (highest first) with last-updated timestamps."""
-        with sqlite3.connect('db/alliance.sqlite') as alliance_db:
+        with db.connect(db.ALLIANCE) as alliance_db:
             row = alliance_db.execute(
                 "SELECT name FROM alliance_list WHERE alliance_id = ?", (alliance_id,)
             ).fetchone()
@@ -1279,7 +1279,7 @@ class AllianceMemberOperations(commands.Cog):
             return
         alliance_name = row[0]
 
-        with sqlite3.connect('db/users.sqlite') as users_db:
+        with db.connect(db.USERS) as users_db:
             members = users_db.execute(
                 "SELECT fid, nickname, power, power_updated_at, "
                 "combat_power, combat_power_updated_at "
@@ -1300,7 +1300,7 @@ class AllianceMemberOperations(commands.Cog):
 
     async def show_manage_members_for(self, interaction: discord.Interaction, alliance_id: int):
         """Open the unified Manage Members view (filter, sort, multi-select, act)."""
-        with sqlite3.connect('db/alliance.sqlite') as alliance_db:
+        with db.connect(db.ALLIANCE) as alliance_db:
             cursor = alliance_db.cursor()
             cursor.execute(
                 "SELECT name FROM alliance_list WHERE alliance_id = ?", (alliance_id,)
@@ -1313,7 +1313,7 @@ class AllianceMemberOperations(commands.Cog):
             return
         alliance_name = row[0]
 
-        with sqlite3.connect('db/users.sqlite') as users_db:
+        with db.connect(db.USERS) as users_db:
             cursor = users_db.cursor()
             cursor.execute(
                 "SELECT fid, nickname, furnace_lv, kid FROM users WHERE alliance = ?",
@@ -1327,7 +1327,7 @@ class AllianceMemberOperations(commands.Cog):
         )
         alliances_with_counts = []
         for aid, name in accessible:
-            with sqlite3.connect('db/users.sqlite') as users_db:
+            with db.connect(db.USERS) as users_db:
                 cur = users_db.cursor()
                 cur.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (aid,))
                 count = cur.fetchone()[0] or 0
@@ -1377,7 +1377,7 @@ class AllianceMemberOperations(commands.Cog):
 
             alliances_with_counts = []
             for alliance_id, name in alliances:
-                with sqlite3.connect('db/users.sqlite') as users_db:
+                with db.connect(db.USERS) as users_db:
                     cursor = users_db.cursor()
                     cursor.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,))
                     member_count = cursor.fetchone()[0]
@@ -1475,7 +1475,7 @@ class AllianceMemberOperations(commands.Cog):
 
             alliances_with_counts = []
             for alliance_id, name in alliances:
-                with sqlite3.connect('db/users.sqlite') as users_db:
+                with db.connect(db.USERS) as users_db:
                     cursor = users_db.cursor()
                     cursor.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,))
                     member_count = cursor.fetchone()[0]
@@ -1487,12 +1487,12 @@ class AllianceMemberOperations(commands.Cog):
                 try:
                     source_alliance_id = int(view.current_select.values[0])
 
-                    with sqlite3.connect('db/alliance.sqlite') as alliance_db:
+                    with db.connect(db.ALLIANCE) as alliance_db:
                         cursor = alliance_db.cursor()
                         cursor.execute("SELECT name FROM alliance_list WHERE alliance_id = ?", (source_alliance_id,))
                         source_alliance_name = cursor.fetchone()[0]
 
-                    with sqlite3.connect('db/users.sqlite') as users_db:
+                    with db.connect(db.USERS) as users_db:
                         cursor = users_db.cursor()
                         cursor.execute("""
                             SELECT fid, nickname, furnace_lv
@@ -1546,7 +1546,7 @@ class AllianceMemberOperations(commands.Cog):
                             await member_interaction.response.send_message("No members selected", ephemeral=True)
                             return
 
-                        with sqlite3.connect('db/users.sqlite') as users_db:
+                        with db.connect(db.USERS) as users_db:
                             cursor = users_db.cursor()
                             placeholders = ','.join('?' * len(selected_fids))
                             cursor.execute(f"SELECT fid, nickname FROM users WHERE fid IN ({placeholders})", selected_fids)
@@ -1595,7 +1595,7 @@ class AllianceMemberOperations(commands.Cog):
                             target_alliance_id = int(target_select.values[0])
 
                             try:
-                                with sqlite3.connect('db/alliance.sqlite') as alliance_db:
+                                with db.connect(db.ALLIANCE) as alliance_db:
                                     cursor = alliance_db.cursor()
                                     cursor.execute("SELECT name FROM alliance_list WHERE alliance_id = ?", (target_alliance_id,))
                                     target_alliance_name = cursor.fetchone()[0]
@@ -1611,7 +1611,7 @@ class AllianceMemberOperations(commands.Cog):
                                     )
                                     return
 
-                                with sqlite3.connect('db/users.sqlite') as users_db:
+                                with db.connect(db.USERS) as users_db:
                                     cursor = users_db.cursor()
                                     placeholders = ','.join('?' * len(moved_fids))
                                     cursor.execute(
@@ -2105,7 +2105,7 @@ class AllianceMemberOperations(commands.Cog):
             await progress.edit(embed)
 
             try:
-                with sqlite3.connect('db/settings.sqlite') as settings_db:
+                with db.connect(db.SETTINGS) as settings_db:
                     cursor = settings_db.cursor()
                     cursor.execute("""
                         SELECT channel_id 
@@ -2281,7 +2281,7 @@ class AllianceMemberOperations(commands.Cog):
                 ]
             elif alliance_id == "all":
                 # Need to join with alliance table to get alliance names
-                with sqlite3.connect('db/users.sqlite') as users_db:
+                with db.connect(db.USERS) as users_db:
                     # Attach the alliance database to get alliance names
                     cursor = users_db.cursor()
                     cursor.execute("ATTACH DATABASE 'db/alliance.sqlite' AS alliance_db")
@@ -2306,7 +2306,7 @@ class AllianceMemberOperations(commands.Cog):
                     cursor.execute("DETACH DATABASE alliance_db")
             else:
                 # Single alliance export
-                with sqlite3.connect('db/users.sqlite') as users_db:
+                with db.connect(db.USERS) as users_db:
                     cursor = users_db.cursor()
                     # Filter out alliance_name if it's in the columns (not applicable for single alliance)
                     filtered_columns = [col for col in selected_columns if col[0] != 'alliance_name']
@@ -2614,7 +2614,7 @@ class IDSearchModal(discord.ui.Modal):
                 return
 
             # Get member information
-            with sqlite3.connect('db/users.sqlite') as users_db:
+            with db.connect(db.USERS) as users_db:
                 cursor = users_db.cursor()
                 cursor.execute("""
                     SELECT fid, nickname, furnace_lv, alliance
@@ -2632,7 +2632,7 @@ class IDSearchModal(discord.ui.Modal):
 
                 fid, nickname, furnace_lv, current_alliance_id = user_result
 
-                with sqlite3.connect('db/alliance.sqlite') as alliance_db:
+                with db.connect(db.ALLIANCE) as alliance_db:
                     cursor = alliance_db.cursor()
                     cursor.execute("SELECT name FROM alliance_list WHERE alliance_id = ?", (current_alliance_id,))
                     row = cursor.fetchone()
@@ -2673,7 +2673,7 @@ class IDSearchModal(discord.ui.Modal):
 
                     async def confirm_callback(confirm_interaction: discord.Interaction):
                         try:
-                            with sqlite3.connect('db/users.sqlite') as users_db:
+                            with db.connect(db.USERS) as users_db:
                                 cursor = users_db.cursor()
                                 cursor.execute("DELETE FROM users WHERE fid = ?", (fid,))
                                 users_db.commit()
@@ -2781,7 +2781,7 @@ class IDSearchModal(discord.ui.Modal):
                     target_alliance_id = int(select.values[0])
 
                     try:
-                        with sqlite3.connect('db/alliance.sqlite') as alliance_db:
+                        with db.connect(db.ALLIANCE) as alliance_db:
                             cursor = alliance_db.cursor()
                             cursor.execute("SELECT name FROM alliance_list WHERE alliance_id = ?", (target_alliance_id,))
                             target_alliance_name = cursor.fetchone()[0]
@@ -2801,7 +2801,7 @@ class IDSearchModal(discord.ui.Modal):
                             )
                             return
 
-                        with sqlite3.connect('db/users.sqlite') as users_db:
+                        with db.connect(db.USERS) as users_db:
                             cursor = users_db.cursor()
                             cursor.execute(
                                 "UPDATE users SET alliance = ? WHERE fid = ?",

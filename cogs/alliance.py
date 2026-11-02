@@ -7,7 +7,7 @@ from discord.ext import commands
 import sqlite3
 import asyncio
 import logging
-from contextlib import closing
+from . import db
 from .permission_handler import PermissionManager
 from .pimp_my_bot import theme, safe_edit_message, menu_timeout, confirm_timeout
 
@@ -26,7 +26,7 @@ def resolve_alliance_kid(alliance_id: int):
     alliance is explicitly kingdom-locked, so `kid` alone (an auto-bound home kingdom) never
     rejects adds - only a deliberate lock does. ok=False means fail closed (read error)."""
     try:
-        with sqlite3.connect("db/alliance.sqlite", timeout=30.0) as conn:
+        with db.connect(db.ALLIANCE) as conn:
             row = conn.execute(
                 "SELECT kid, COALESCE(state_locked, 0) FROM alliance_list WHERE alliance_id = ?",
                 (alliance_id,),
@@ -69,7 +69,7 @@ def check_alliance_kingdom(alliance_id: int, player_kid) -> "str | None":
 
 
 def rename_alliance(alliance_id: int, name: str) -> None:
-    with closing(sqlite3.connect('db/alliance.sqlite', timeout=30.0)) as conn:
+    with db.connect(db.ALLIANCE) as conn:
         conn.execute("UPDATE alliance_list SET name = ? WHERE alliance_id = ?", (name, alliance_id))
         conn.commit()
 
@@ -83,7 +83,7 @@ class Alliance(commands.Cog):
         self._check_and_add_column()
 
     def _create_table(self):
-        with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+        with db.connect(db.ALLIANCE) as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS alliance_list (
@@ -96,7 +96,7 @@ class Alliance(commands.Cog):
             conn.commit()
 
     def _check_and_add_column(self):
-        with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+        with db.connect(db.ALLIANCE) as conn:
             cursor = conn.cursor()
             cursor.execute("PRAGMA table_info(alliance_list)")
             columns = [info[1] for info in cursor.fetchall()]
@@ -132,7 +132,7 @@ class Alliance(commands.Cog):
             return
 
         try:
-            with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+            with db.connect(db.ALLIANCE) as conn:
                 cursor = conn.cursor()
                 if is_global:
                     # Global admin - show all alliances
@@ -171,7 +171,7 @@ class Alliance(commands.Cog):
             alliance_list = ""
             for alliance_id, name, _interval in alliances:
 
-                with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+                with db.connect(db.USERS) as conn:
                     cursor = conn.cursor()
                     cursor.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,))
                     member_count = cursor.fetchone()[0]
@@ -207,7 +207,7 @@ class Alliance(commands.Cog):
                     )
                     return
                 
-            with sqlite3.connect('db/settings.sqlite', timeout=30.0) as conn:
+            with db.connect(db.SETTINGS) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT COUNT(*) FROM admin")
                 admin_count = cursor.fetchone()[0]
@@ -215,7 +215,7 @@ class Alliance(commands.Cog):
             user_id = interaction.user.id
 
             if admin_count == 0:
-                with sqlite3.connect('db/settings.sqlite', timeout=30.0) as conn:
+                with db.connect(db.SETTINGS) as conn:
                     cursor = conn.cursor()
                     cursor.execute("""
                         INSERT INTO admin (id, is_initial)
@@ -236,7 +236,7 @@ class Alliance(commands.Cog):
                 
                 await asyncio.sleep(3)
                 
-            with sqlite3.connect('db/settings.sqlite', timeout=30.0) as conn:
+            with db.connect(db.SETTINGS) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT id, is_initial FROM admin WHERE id = ?", (user_id,))
                 admin = cursor.fetchone()
@@ -347,7 +347,7 @@ class Alliance(commands.Cog):
 
     async def show_edit_name_for(self, interaction: discord.Interaction, alliance_id: int):
         """Direct entry: rename a single alliance (no other settings)."""
-        with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+        with db.connect(db.ALLIANCE) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT name FROM alliance_list WHERE alliance_id = ?", (alliance_id,)
@@ -364,7 +364,7 @@ class Alliance(commands.Cog):
 
     async def show_edit_kingdom_for(self, interaction: discord.Interaction, alliance_id: int):
         """Open the per-alliance kingdom-lock modal. Empty clears the lock."""
-        with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+        with db.connect(db.ALLIANCE) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT name, kid, COALESCE(state_locked, 0) FROM alliance_list WHERE alliance_id = ?",
@@ -400,7 +400,7 @@ class Alliance(commands.Cog):
                 return
 
             user_id = interaction.user.id
-            with sqlite3.connect('db/settings.sqlite', timeout=30.0) as conn:
+            with db.connect(db.SETTINGS) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT id, is_initial FROM admin WHERE id = ?", (user_id,))
                 admin = cursor.fetchone()
@@ -476,7 +476,7 @@ class Alliance(commands.Cog):
         # Fetch full alliance details for the ones admin can access
         alliance_ids = [a[0] for a in admin_alliances]
         placeholders = ','.join('?' * len(alliance_ids))
-        with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+        with db.connect(db.ALLIANCE) as conn:
             cursor = conn.cursor()
             cursor.execute(f"""
                 SELECT alliance_id, name
@@ -683,7 +683,7 @@ class Alliance(commands.Cog):
 
             alliance_members = {}
             for alliance_id, _ in alliances:
-                with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+                with db.connect(db.USERS) as conn:
                     cursor = conn.cursor()
                     cursor.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,))
                     member_count = cursor.fetchone()[0]
@@ -736,7 +736,7 @@ class Alliance(commands.Cog):
             if alliance_id is None:
                 alliance_id = int(interaction.data["values"][0])
 
-            with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+            with db.connect(db.ALLIANCE) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT name FROM alliance_list WHERE alliance_id = ?", (alliance_id,))
                 alliance_data = cursor.fetchone()
@@ -747,32 +747,32 @@ class Alliance(commands.Cog):
 
             alliance_name = alliance_data[0]
 
-            with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+            with db.connect(db.ALLIANCE) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT COUNT(*) FROM alliancesettings WHERE alliance_id = ?", (alliance_id,))
                 settings_count = cursor.fetchone()[0]
 
-            with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+            with db.connect(db.USERS) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,))
                 users_count = cursor.fetchone()[0]
 
-            with sqlite3.connect('db/settings.sqlite', timeout=30.0) as conn:
+            with db.connect(db.SETTINGS) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT COUNT(*) FROM adminserver WHERE alliances_id = ?", (alliance_id,))
                 admin_server_count = cursor.fetchone()[0]
 
-            with sqlite3.connect('db/giftcode.sqlite', timeout=30.0) as conn:
+            with db.connect(db.GIFTCODE) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT COUNT(*) FROM giftcode_channel WHERE alliance_id = ?", (alliance_id,))
                 gift_channels_count = cursor.fetchone()[0]
 
-            with sqlite3.connect('db/giftcode.sqlite', timeout=30.0) as conn:
+            with db.connect(db.GIFTCODE) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT COUNT(*) FROM giftcodecontrol WHERE alliance_id = ?", (alliance_id,))
                 gift_code_control_count = cursor.fetchone()[0]
 
-            with sqlite3.connect('db/settings.sqlite', timeout=30.0) as conn:
+            with db.connect(db.SETTINGS) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT COUNT(*) FROM alliance_logs WHERE alliance_id = ?", (alliance_id,))
                 alliance_logs_count = cursor.fetchone()[0]
@@ -804,13 +804,13 @@ class Alliance(commands.Cog):
                     # Delete dependents first and the alliance row LAST. The DBs
                     # aren't a single transaction, so if a step fails the alliance
                     # still exists and its members stay valid instead of orphaned.
-                    with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
+                    with db.connect(db.USERS) as conn:
                         cursor = conn.cursor()
                         cursor.execute("DELETE FROM users WHERE alliance = ?", (alliance_id,))
                         users_count_deleted = cursor.rowcount
                         conn.commit()
 
-                    with sqlite3.connect('db/settings.sqlite', timeout=30.0) as conn:
+                    with db.connect(db.SETTINGS) as conn:
                         cursor = conn.cursor()
                         cursor.execute("DELETE FROM adminserver WHERE alliances_id = ?", (alliance_id,))
                         admin_server_count = cursor.rowcount
@@ -820,7 +820,7 @@ class Alliance(commands.Cog):
 
                         conn.commit()
 
-                    with sqlite3.connect('db/giftcode.sqlite', timeout=30.0) as conn:
+                    with db.connect(db.GIFTCODE) as conn:
                         cursor = conn.cursor()
                         cursor.execute("DELETE FROM giftcode_channel WHERE alliance_id = ?", (alliance_id,))
                         gift_channels_count = cursor.rowcount
@@ -830,13 +830,13 @@ class Alliance(commands.Cog):
 
                         conn.commit()
 
-                    with closing(sqlite3.connect('db/id_channel.sqlite', timeout=30.0)) as conn, conn:
+                    with db.connect(db.ID_CHANNEL) as conn:
                         id_channel_rows = conn.execute(
                             "SELECT channel_id, info_message_id FROM id_channels WHERE alliance_id = ?",
                             (alliance_id,)).fetchall()
                         conn.execute("DELETE FROM id_channels WHERE alliance_id = ?", (alliance_id,))
 
-                    with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+                    with db.connect(db.ALLIANCE) as conn:
                         cursor = conn.cursor()
                         cursor.execute("DELETE FROM alliancesettings WHERE alliance_id = ?", (alliance_id,))
                         admin_settings_count = cursor.rowcount
@@ -1065,7 +1065,7 @@ class AddAllianceModal(discord.ui.Modal):
                 return
 
         try:
-            with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
+            with db.connect(db.ALLIANCE) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT alliance_id FROM alliance_list WHERE name = ?", (alliance_name,)
@@ -1092,7 +1092,7 @@ class AddAllianceModal(discord.ui.Modal):
                 )
                 conn.commit()
 
-            with sqlite3.connect('db/giftcode.sqlite', timeout=30.0) as conn:
+            with db.connect(db.GIFTCODE) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO giftcodecontrol (alliance_id, status) VALUES (?, 1)",
@@ -1416,5 +1416,5 @@ class PaginatedChannelView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=self)
 
 async def setup(bot):
-    conn = sqlite3.connect('db/alliance.sqlite')
+    conn = db.connect_persistent(db.ALLIANCE)
     await bot.add_cog(Alliance(bot, conn))

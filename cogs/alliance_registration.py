@@ -4,8 +4,8 @@ from discord.ext import commands
 import sqlite3
 import asyncio
 import logging
-from contextlib import closing
 from datetime import datetime, timezone
+from . import db
 from .pimp_my_bot import theme, menu_timeout
 from .alliance import check_alliance_kingdom
 from .gift_state_resolver import get_alliance_kid
@@ -59,7 +59,7 @@ class AllianceRegistration(commands.Cog):
     def set_registration_enabled(self, enabled: bool) -> None:
         """Persist the global self-registration toggle to settings.sqlite."""
         try:
-            with sqlite3.connect("db/settings.sqlite") as conn:
+            with db.connect(db.SETTINGS) as conn:
                 cursor = conn.cursor()
                 cursor.execute("CREATE TABLE IF NOT EXISTS register_settings (enabled BOOLEAN)")
                 cursor.execute("SELECT COUNT(*) FROM register_settings")
@@ -81,7 +81,7 @@ class AllianceRegistration(commands.Cog):
     def is_registration_enabled(self) -> bool:
         """Check if registration is enabled in the settings database."""
         try:
-            with closing(sqlite3.connect("db/settings.sqlite")) as conn:
+            with db.connect(db.SETTINGS) as conn:
                 cursor = conn.cursor()
 
                 cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='register_settings'")
@@ -102,7 +102,7 @@ class AllianceRegistration(commands.Cog):
 
     async def alliance_autocomplete(self, interaction: discord.Interaction, current: str):
         def _read():
-            with sqlite3.connect("db/alliance.sqlite", timeout=30.0) as conn:
+            with db.connect(db.ALLIANCE) as conn:
                 return conn.execute("SELECT alliance_id, name FROM alliance_list").fetchall()
         alliances = await asyncio.to_thread(_read)
 
@@ -112,7 +112,7 @@ class AllianceRegistration(commands.Cog):
         ][:25]
 
     def _alliance_exists(self, alliance_id: int) -> bool:
-        with sqlite3.connect("db/alliance.sqlite", timeout=30.0) as conn:
+        with db.connect(db.ALLIANCE) as conn:
             return conn.execute(
                 "SELECT 1 FROM alliance_list WHERE alliance_id = ?", (alliance_id,)
             ).fetchone() is not None

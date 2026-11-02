@@ -1,14 +1,13 @@
 """Power / Combat Power change history: record, read, and format deltas."""
 import logging
 import os
-import sqlite3
-from contextlib import closing
 
+from . import db
 from .pimp_my_bot import theme
 
 logger = logging.getLogger(__name__)
 
-_CHANGES_DB = "db/changes.sqlite"
+_CHANGES_DB = db.CHANGES
 _tables_ready: set[str] = set()
 
 METRICS = {
@@ -30,7 +29,7 @@ def ensure_tables() -> None:
     path = os.path.abspath(_CHANGES_DB)
     if path in _tables_ready:
         return
-    with closing(sqlite3.connect(_CHANGES_DB, timeout=30.0)) as conn:
+    with db.connect(_CHANGES_DB) as conn:
         for m in METRICS.values():
             conn.execute(
                 f"CREATE TABLE IF NOT EXISTS {m['table']} ("
@@ -62,7 +61,7 @@ def record_change(fid, metric, old_value, new_value, change_date) -> None:
     m = METRICS[metric]
     try:
         ensure_tables()
-        with closing(sqlite3.connect(_CHANGES_DB, timeout=30.0)) as conn:
+        with db.connect(_CHANGES_DB) as conn:
             conn.execute(
                 f"INSERT INTO {m['table']} "
                 f"(fid, {m['old_col']}, {m['new_col']}, change_date) "
@@ -85,7 +84,7 @@ def latest_deltas(fids, metric):
     ensure_tables()
     m = METRICS[metric]
     placeholders = ",".join("?" for _ in fids)
-    with sqlite3.connect(_CHANGES_DB, timeout=30.0) as conn:
+    with db.connect(_CHANGES_DB) as conn:
         rows = conn.execute(
             f"SELECT fid, {m['old_col']}, {m['new_col']}, change_date FROM {m['table']} "
             f"WHERE fid IN ({placeholders}) ORDER BY change_date ASC, id ASC",
@@ -103,7 +102,7 @@ def deltas_at(fids, metric, change_date):
     ensure_tables()
     m = METRICS[metric]
     placeholders = ",".join("?" for _ in fids)
-    with sqlite3.connect(_CHANGES_DB, timeout=30.0) as conn:
+    with db.connect(_CHANGES_DB) as conn:
         rows = conn.execute(
             f"SELECT fid, {m['old_col']}, {m['new_col']}, change_date "
             f"FROM {m['table']} WHERE change_date = ? AND fid IN ({placeholders})",
@@ -117,7 +116,7 @@ def history(fid, metric):
         return []
     ensure_tables()
     m = METRICS[metric]
-    with sqlite3.connect(_CHANGES_DB, timeout=30.0) as conn:
+    with db.connect(_CHANGES_DB) as conn:
         rows = conn.execute(
             f"SELECT {m['old_col']}, {m['new_col']}, change_date FROM {m['table']} "
             f"WHERE fid = ? ORDER BY change_date DESC, id DESC",

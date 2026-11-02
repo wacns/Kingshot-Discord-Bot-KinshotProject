@@ -3,10 +3,9 @@
 import asyncio
 import discord
 from discord.ext import commands
-import sqlite3
 import logging
-from contextlib import closing
 from datetime import datetime
+from . import db
 from .pimp_my_bot import theme, safe_edit_message, menu_timeout
 from .permission_handler import PermissionManager
 from .alliance_api_sync import clear_sync_channel, set_sync_channel
@@ -20,8 +19,8 @@ class AllianceChannels(commands.Cog):
 
     async def show_channel_setup_for(self, interaction: discord.Interaction, alliance_id: int):
         """Open Channel Setup for a specific alliance (called from the Hub)."""
-        with sqlite3.connect('db/alliance.sqlite') as db:
-            cur = db.cursor()
+        with db.connect(db.ALLIANCE) as dbc:
+            cur = dbc.cursor()
             cur.execute(
                 "SELECT name FROM alliance_list WHERE alliance_id = ?", (alliance_id,)
             )
@@ -71,8 +70,8 @@ class ChannelSetupView(discord.ui.View):
     # ── DB readers ─────────────────────────────────────────────────────
 
     def _get_id_channel(self):
-        with sqlite3.connect('db/id_channel.sqlite') as db:
-            cur = db.cursor()
+        with db.connect(db.ID_CHANNEL) as dbc:
+            cur = dbc.cursor()
             cur.execute(
                 "SELECT channel_id FROM id_channels WHERE alliance_id = ? LIMIT 1",
                 (self.alliance_id,),
@@ -81,8 +80,8 @@ class ChannelSetupView(discord.ui.View):
         return row[0] if row else None
 
     def _get_activity_log_channel(self):
-        with sqlite3.connect('db/settings.sqlite') as db:
-            cur = db.cursor()
+        with db.connect(db.SETTINGS) as dbc:
+            cur = dbc.cursor()
             cur.execute(
                 "SELECT channel_id FROM alliance_logs WHERE alliance_id = ?",
                 (self.alliance_id,),
@@ -93,8 +92,8 @@ class ChannelSetupView(discord.ui.View):
     # ── DB writers ─────────────────────────────────────────────────────
 
     def _set_id_channel(self, guild_id: int, channel_id: int, user_id: int):
-        with sqlite3.connect('db/id_channel.sqlite') as db:
-            cur = db.cursor()
+        with db.connect(db.ID_CHANNEL) as dbc:
+            cur = dbc.cursor()
             cur.execute(
                 "SELECT alliance_id FROM id_channels "
                 "WHERE guild_id = ? AND channel_id = ? AND alliance_id != ?",
@@ -103,7 +102,7 @@ class ChannelSetupView(discord.ui.View):
             conflict = cur.fetchone()
             if conflict:
                 other_alliance_id = conflict[0]
-                with sqlite3.connect('db/alliance.sqlite') as a_db:
+                with db.connect(db.ALLIANCE) as a_db:
                     a_cur = a_db.cursor()
                     a_cur.execute(
                         "SELECT name FROM alliance_list WHERE alliance_id = ?",
@@ -127,53 +126,53 @@ class ChannelSetupView(discord.ui.View):
                 (guild_id, self.alliance_id, channel_id,
                  datetime.now().isoformat(), user_id),
             )
-            db.commit()
+            dbc.commit()
 
     def _clear_id_channel(self, guild_id: int):
-        with sqlite3.connect('db/id_channel.sqlite') as db:
-            cur = db.cursor()
+        with db.connect(db.ID_CHANNEL) as dbc:
+            cur = dbc.cursor()
             cur.execute(
                 "DELETE FROM id_channels WHERE guild_id = ? AND alliance_id = ?",
                 (guild_id, self.alliance_id),
             )
-            db.commit()
+            dbc.commit()
 
     def _set_activity_log(self, channel_id: int, **_):
-        with sqlite3.connect('db/settings.sqlite') as db:
-            cur = db.cursor()
+        with db.connect(db.SETTINGS) as dbc:
+            cur = dbc.cursor()
             cur.execute(
                 "INSERT INTO alliance_logs (alliance_id, channel_id) VALUES (?, ?) "
                 "ON CONFLICT(alliance_id) DO UPDATE SET channel_id = excluded.channel_id",
                 (self.alliance_id, channel_id),
             )
-            db.commit()
+            dbc.commit()
 
     def _clear_activity_log(self, **_):
-        with sqlite3.connect('db/settings.sqlite') as db:
-            cur = db.cursor()
+        with db.connect(db.SETTINGS) as dbc:
+            cur = dbc.cursor()
             cur.execute(
                 "DELETE FROM alliance_logs WHERE alliance_id = ?", (self.alliance_id,)
             )
-            db.commit()
+            dbc.commit()
 
     def _set_redemption_channel(self, channel_id: int, **_):
-        with sqlite3.connect('db/alliance.sqlite') as db:
-            cur = db.cursor()
+        with db.connect(db.ALLIANCE) as dbc:
+            cur = dbc.cursor()
             cur.execute(
                 "INSERT INTO alliancesettings (alliance_id, redemption_channel_id) VALUES (?, ?) "
                 "ON CONFLICT(alliance_id) DO UPDATE SET redemption_channel_id = excluded.redemption_channel_id",
                 (self.alliance_id, channel_id),
             )
-            db.commit()
+            dbc.commit()
 
     def _clear_redemption_channel(self, **_):
-        with sqlite3.connect('db/alliance.sqlite') as db:
-            cur = db.cursor()
+        with db.connect(db.ALLIANCE) as dbc:
+            cur = dbc.cursor()
             cur.execute(
                 "UPDATE alliancesettings SET redemption_channel_id = NULL WHERE alliance_id = ?",
                 (self.alliance_id,),
             )
-            db.commit()
+            dbc.commit()
 
     def _set_sync_log(self, channel_id: int, **_):
         set_sync_channel(self.alliance_id, channel_id)
@@ -183,8 +182,8 @@ class ChannelSetupView(discord.ui.View):
 
     def _alliance_setting_channels(self):
         """(redemption, sync log) channel ids, read on one connection."""
-        with closing(sqlite3.connect('db/alliance.sqlite', timeout=30.0)) as db:
-            row = db.execute(
+        with db.connect(db.ALLIANCE) as dbc:
+            row = dbc.execute(
                 "SELECT redemption_channel_id, channel_id FROM alliancesettings WHERE alliance_id = ?",
                 (self.alliance_id,),
             ).fetchone()

@@ -28,18 +28,6 @@ ROOT = Path(__file__).resolve().parent.parent
 # Files that still contain raw `sqlite3.connect` calls waiting to be migrated.
 # Each migration task removes its files from this set; it must end up empty.
 PENDING: set[str] = {
-    # alliance batch
-    "cogs/alliance.py",
-    "cogs/alliance_member_operations.py",
-    "cogs/alliance_history.py",
-    "cogs/alliance_logs.py",
-    "cogs/alliance_channels.py",
-    "cogs/alliance_id_channel.py",
-    "cogs/alliance_api_sync.py",
-    "cogs/alliance_power_changes.py",
-    "cogs/alliance_registration.py",
-    "cogs/alliance_w_command.py",
-    "cogs/alliance_member_edit.py",
     # attendance batch
     "cogs/attendance.py",
     "cogs/attendance_ocr_parsers.py",
