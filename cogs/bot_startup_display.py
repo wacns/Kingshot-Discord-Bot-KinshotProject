@@ -172,17 +172,17 @@ def venv_instructions(venv_python, platform):
     print(f"\n  {_OK} Virtual environment created")
     print()
     if platform == "win32":
-        print(f"  To continue, run the bot with the venv Python:")
+        print("  To continue, run the bot with the venv Python:")
         print(f"    {venv_python} {sys.argv[0] if sys.argv else 'main.py'}")
     else:
-        print(f"  Restarting in virtual environment...")
+        print("  Restarting in virtual environment...")
     print()
 
 
 def venv_exists_instructions(venv_python, platform):
     """Display instructions when venv exists but user isn't in it."""
-    print(f"\n  A virtual environment exists but you're not using it.")
-    print(f"  Run the bot with:")
+    print("\n  A virtual environment exists but you're not using it.")
+    print("  Run the bot with:")
     print(f"    {venv_python} {sys.argv[0] if sys.argv else 'main.py'}")
     print()
 
@@ -233,7 +233,7 @@ def ready():
     """Display the final ready message and usage hint."""
     message = random.choice(_get_ready_messages())
     print(f"\n  {message}")
-    print(f"   ↳ Run /settings in Discord to configure the bot.")
+    print("   ↳ Run /settings in Discord to configure the bot.")
 
 
 def shutdown():

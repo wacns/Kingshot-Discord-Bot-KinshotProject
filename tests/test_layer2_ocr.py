@@ -14,12 +14,10 @@ Run:  python -m pytest test_layer2_ocr.py -v
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
 
 import pytest
 
-from harness import bt, run_ocr_pipeline, load_roster, FIXTURES, discover_fixtures
+from harness import bt, run_ocr_pipeline, FIXTURES, discover_fixtures
 
 
 # Map a fixture's UI language → RapidOCR primary engine code.

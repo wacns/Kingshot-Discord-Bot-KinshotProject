@@ -119,7 +119,7 @@ class Sim:
         error_mark, log_mark = self.env.error_cursor, len(self.logged_errors)
         result = await action
         raised = list(self.env.errors_since(error_mark))
-        self.env.errors  # reported per click, so SimCord must not re-raise them at shutdown
+        self.env.errors  # noqa: B018 - property read; reported per click, so SimCord must not re-raise them at shutdown
         return Click(result, raised, self.logged_errors[log_mark:])
 
 

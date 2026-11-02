@@ -76,7 +76,6 @@ def test_pinned_drop_never_touches_reward_mail_last_row():
 
 
 def test_short_roster_name_does_not_absorb_long_ocr_name():
-    roster = [(1, "PinkyCosmoDog"), (2, "⊙~MO")]
     # The real player owns their name; the phantom must not match the 2-char
     # nickname just because "mo" is a substring of "pinkycosmodog".
     cands = bt.match_roster("PinkyCosmoDog", [(2, "⊙~MO")])

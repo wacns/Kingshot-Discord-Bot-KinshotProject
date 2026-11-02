@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 from harness_attendance import parsers, bear_track
 

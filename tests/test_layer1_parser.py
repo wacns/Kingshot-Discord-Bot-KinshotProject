@@ -7,7 +7,7 @@ fast and deterministic. Run after every code change.
 from __future__ import annotations
 
 import pytest
-from harness import bt, parse_text, load_roster
+from harness import bt, load_roster
 
 
 # Real OCR samples captured from log/bot.txt during user testing.

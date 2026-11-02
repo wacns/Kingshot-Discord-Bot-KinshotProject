@@ -381,7 +381,7 @@ class BotOperations(commands.Cog):
                     if update_notes:
                         notes_text = "\n".join([f"• {note.lstrip('- *•').strip()}" for note in update_notes[:10]])
                         if len(update_notes) > 10:
-                            notes_text += f"\n• ... and more!"
+                            notes_text += "\n• ... and more!"
                         
                         main_embed.add_field(
                             name="Release Notes",
@@ -392,8 +392,8 @@ class BotOperations(commands.Cog):
                     # Windows hosts don't auto-restart — flag it so the admin
                     # knows manual intervention will be needed after the update.
                     update_help = (
-                        f"Click **Update & Restart** below to install the "
-                        f"update now. The bot will reconnect automatically."
+                        "Click **Update & Restart** below to install the "
+                        "update now. The bot will reconnect automatically."
                     )
                     if sys.platform == 'win32' and not os.path.exists('/.dockerenv'):
                         update_help = (

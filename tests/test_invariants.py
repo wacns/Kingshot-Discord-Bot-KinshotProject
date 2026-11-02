@@ -11,7 +11,6 @@ import re
 import sys
 from pathlib import Path
 
-import pytest
 
 from cogs.pimp_my_bot import ICON_NAMES
 

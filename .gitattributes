@@ -1,0 +1,6 @@
+# Keep developer-only files out of release archives (and so out of the in-bot updater).
+tests/ export-ignore
+requirements-dev.txt export-ignore
+ruff.toml export-ignore
+.github/ export-ignore
+.gitlab-ci.yml export-ignore

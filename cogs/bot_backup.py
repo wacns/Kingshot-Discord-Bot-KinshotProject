@@ -623,9 +623,9 @@ class BackupManageView(discord.ui.View):
 
         if not backup_files:
             embed.description = (
-                f"No local backup files yet.\n\n"
-                f"Use **Create Backup** from the Backup System menu, or wait "
-                f"for the next automatic backup."
+                "No local backup files yet.\n\n"
+                "Use **Create Backup** from the Backup System menu, or wait "
+                "for the next automatic backup."
             )
             return embed
 
@@ -674,7 +674,7 @@ class BackupManageView(discord.ui.View):
 
         if manual_removed == 0 and auto_removed == 0:
             self.status_note = (
-                f"Already within retention limits — nothing to remove."
+                "Already within retention limits — nothing to remove."
             )
         else:
             parts = []

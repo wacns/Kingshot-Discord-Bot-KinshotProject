@@ -77,7 +77,7 @@ def _seed_user(db_path, uid, is_initial=0, is_owner=0, alliances=()):
         conn.commit()
 
 def test_role_only_member_is_admin(tmp_path, monkeypatch):
-    db = _fresh_db(tmp_path, monkeypatch)
+    _fresh_db(tmp_path, monkeypatch)
     PermissionManager.add_role_grant(10, 900, tier="alliance", alliance_ids=[1])
     PermissionManager._bust_role_cache()
     PermissionManager._admin_cache = None  # bust user cache

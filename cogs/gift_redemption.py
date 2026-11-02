@@ -587,7 +587,7 @@ def _build_batch_progress_embed(giftcodes, alliances_info, total_codes=None):
         total_codes = len(giftcodes)
 
     lines = []
-    for aid, info in alliances_info.items():
+    for _aid, info in alliances_info.items():
         status = info['status']
         codes_completed = info.get('codes_completed', 0)
 
@@ -822,7 +822,7 @@ async def validate_gift_code_immediately(cog, giftcode, source="unknown", force=
 
             # These statuses mean the code is valid but has requirements
             if status in ["TOO_SMALL_SPEND_MORE", "TOO_POOR_SPEND_MORE"]:
-                validation_msg = f"Code validated (has requirements)"
+                validation_msg = "Code validated (has requirements)"
                 cog.logger.info(f"Gift code '{giftcode}' is valid but has requirements: {status}")
             else:
                 validation_msg = f"Code validated successfully ({status})"
@@ -1582,11 +1582,11 @@ async def handle_state_resolve_process(cog, process):
         lead_name = await progress.update(
             wave[0], f"{theme.hourglassIcon} Scanning `{len(wave)}` member(s) at once...")
 
-        async def _on_probe(done, of_total, _fid=wave[0], _name=lead_name):
+        async def _on_probe(done, of_total, _fid=wave[0], _name=lead_name, _count=len(wave)):
             details['probe'], details['probe_total'] = done, of_total
             _save()
             await progress.update(
-                _fid, f"{theme.hourglassIcon} Scanning `{len(wave)}` member(s) at once - "
+                _fid, f"{theme.hourglassIcon} Scanning `{_count}` member(s) at once - "
                       f"`{done}/{of_total}` kingdoms checked for **{_name}**")
 
         results = await asyncio.gather(*(
@@ -1810,7 +1810,7 @@ async def finish_removals(cog, api_checks, removals, *, confirm):
 def state_mismatch_note(api_on):
     """The redemption summary's line for members whose kingdom was rejected; `{count}` is filled in later."""
     lead = (f"{theme.globeIcon} **" + "{count}" + "** members are hiding out in the wrong kingdom - "
-            f"the game wasn't fooled. ")
+            "the game wasn't fooled. ")
     if api_on:
         return (lead + "Members your API finds in a new kingdom are updated, and anyone still in this "
                 "alliance gets the code shortly. Fix the rest under "

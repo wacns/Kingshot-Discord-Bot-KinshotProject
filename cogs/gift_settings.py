@@ -186,7 +186,7 @@ async def show_redemption_priority(cog, interaction: discord.Interaction):
 
         # Build priority list
         priority_list = []
-        for idx, (alliance_id, name, priority) in enumerate(alliances_with_priority, 1):
+        for idx, (_alliance_id, name, _priority) in enumerate(alliances_with_priority, 1):
             priority_list.append(f"`{idx}.` **{name}**")
 
         embed.add_field(

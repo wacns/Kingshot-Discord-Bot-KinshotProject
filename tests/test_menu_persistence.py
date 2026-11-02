@@ -209,7 +209,6 @@ def test_click_answered_during_the_grace_wait_is_left_alone(monkeypatch):
 
 
 def test_menus_no_longer_wipe_or_grey_out_on_timeout():
-    import inspect
     from cogs import pimp_my_bot
     assert not hasattr(pimp_my_bot, "disable_expired_view")
     from pathlib import Path

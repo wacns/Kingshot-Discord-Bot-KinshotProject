@@ -888,7 +888,6 @@ class NotificationSystem(commands.Cog):
                 """)
                 notifications = self.cursor.fetchall()
 
-                now = datetime.now(pytz.UTC)
                 for notification in notifications:
                     try:
                         with use_guild_theme(notification[1]):
@@ -1018,7 +1017,7 @@ class NotificationSystem(commands.Cog):
                 try:
                     msg = await channel.fetch_message(message_id)
                     await msg.delete()
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                     # Message already deleted, no permission, or other error
                     pass
                 finally:
@@ -1740,7 +1739,7 @@ class RepeatOptionView(discord.ui.View):
 
     async def save_notification(self, interaction, repeat, repeat_minutes=0, interval_text=None, selected_weekdays=None):
         try:
-            notification_id = await self.cog.save_notification(
+            await self.cog.save_notification(
                 guild_id=interaction.guild_id,
                 channel_id=self.channel_id,
                 start_date=self.start_date,
@@ -3339,7 +3338,6 @@ class BearTrapView(discord.ui.View):
                             display_name = f"{plain_desc[:30]} (Custom)" if plain_desc else "Custom Notification"
 
                     # Format next occurrence time
-                    import pytz
                     from datetime import datetime
                     if notif[15]:  # next_notification
                         try:

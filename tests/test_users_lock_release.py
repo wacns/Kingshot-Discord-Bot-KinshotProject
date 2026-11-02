@@ -6,7 +6,6 @@ skipped both, so every other writer (e.g. the kingdom scan saving a found
 kingdom) hit "database is locked" until something on that connection committed.
 """
 import sqlite3
-import types
 
 import pytest
 

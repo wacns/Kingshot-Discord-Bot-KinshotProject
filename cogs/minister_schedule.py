@@ -121,7 +121,7 @@ class ChannelSelect(discord.ui.ChannelSelect):
                 # Get the ChannelConfigurationView from minister_menu
                 import sys
                 minister_menu_module = minister_menu_cog.__class__.__module__
-                ChannelConfigurationView = getattr(sys.modules[minister_menu_module], 'ChannelConfigurationView')
+                ChannelConfigurationView = sys.modules[minister_menu_module].ChannelConfigurationView
                 
                 view = ChannelConfigurationView(self.bot, minister_menu_cog)
                 
@@ -218,7 +218,7 @@ class MinisterSchedule(commands.Cog):
             await log_channel.send(embed=embed)
         else:
             logger.error("Could not find the log channel please change it to a valid channel")
-            print(f"Error: Could not find the log channel please change it to a valid channel")
+            print("Error: Could not find the log channel please change it to a valid channel")
 
     async def is_admin(self, user_id: int) -> bool:
         is_admin, _ = PermissionManager.is_admin(user_id)
@@ -697,7 +697,7 @@ class MinisterSchedule(commands.Cog):
             if not log_channel:
                 try:
                     await interaction.followup.send(
-                        content=f"Please select a log channel to use:",
+                        content="Please select a log channel to use:",
                         view=ChannelSelectView(self.bot, log_context)
                     )
                     return
@@ -884,7 +884,7 @@ class MinisterSchedule(commands.Cog):
             if not log_channel:
                 try:
                     await interaction.followup.send(
-                        content=f"Please select a log channel to use:",
+                        content="Please select a log channel to use:",
                         view=ChannelSelectView(self.bot, log_context)
                     )
                     return
@@ -992,7 +992,7 @@ class MinisterSchedule(commands.Cog):
 
         if not log_channel:
             await interaction.followup.send(
-                f"[Warning] Could not find a log channel. Log channel is needed before clearing the appointment \n\nRun the `/settings` command --> Other Features --> Minister Scheduling --> Channel Setup and choose a log channel")
+                "[Warning] Could not find a log channel. Log channel is needed before clearing the appointment \n\nRun the `/settings` command --> Other Features --> Minister Scheduling --> Channel Setup and choose a log channel")
             return
 
         try:

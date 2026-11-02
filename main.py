@@ -578,19 +578,19 @@ def check_and_install_requirements():
         
         try:
             if package_name == "discord.py":
-                import discord
+                import discord  # noqa: F401 (availability check)
             elif package_name == "aiohttp-socks":
-                import aiohttp_socks
+                import aiohttp_socks  # noqa: F401 (availability check)
             elif package_name == "python-dotenv":
-                import dotenv
+                import dotenv  # noqa: F401 (availability check)
             elif package_name == "python-bidi":
-                import bidi
+                import bidi  # noqa: F401 (availability check)
             elif package_name == "arabic-reshaper":
-                import arabic_reshaper
+                import arabic_reshaper  # noqa: F401 (availability check)
             elif package_name.lower() == "pillow":
-                import PIL
+                import PIL  # noqa: F401 (availability check)
             elif package_name.lower() == "numpy":
-                import numpy
+                import numpy  # noqa: F401 (availability check)
             elif package_name.lower() == "onnxruntime":
                 _import_onnxruntime_quietly()
                 # Check if we need to switch versions based on Python version
@@ -1832,7 +1832,7 @@ if __name__ == "__main__":
 
             def signal_handler():
                 if is_container():
-                    print(f"\n  Received shutdown signal. Shutting down gracefully...")
+                    print("\n  Received shutdown signal. Shutting down gracefully...")
                 else:
                     print(f"\n  {startup.shutdown()}")
                 stop_event.set()

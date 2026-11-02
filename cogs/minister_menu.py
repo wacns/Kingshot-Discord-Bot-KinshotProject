@@ -189,7 +189,7 @@ class FilteredUserSelectView(discord.ui.View):
         else:
             # Create options for users
             options = []
-            for fid, nickname, alliance_id in current_users:
+            for fid, nickname, _alliance_id in current_users:
                 # Check if user is already booked
                 emoji = f"{theme.calendarIcon}" if fid in self.booked_fids else ""
                 # Avoid nested f-strings for Python 3.9+ compatibility
@@ -664,7 +664,7 @@ class ChannelConfigurationView(discord.ui.View):
 
         import sys
         minister_module = minister_schedule_cog.__class__.__module__
-        ChannelSelect = getattr(sys.modules[minister_module], 'ChannelSelect')
+        ChannelSelect = sys.modules[minister_module].ChannelSelect
         
         # Create a custom view with a back button
         class ChannelSelectWithBackView(discord.ui.View):
@@ -700,7 +700,7 @@ class ChannelConfigurationView(discord.ui.View):
 
                 import sys
                 minister_menu_module = self.cog.__class__.__module__
-                ChannelConfigurationView = getattr(sys.modules[minister_menu_module], 'ChannelConfigurationView')
+                ChannelConfigurationView = sys.modules[minister_menu_module].ChannelConfigurationView
                 
                 view = ChannelConfigurationView(self.bot, self.cog)
                 
@@ -1613,7 +1613,7 @@ class MinisterMenu(commands.Cog):
 
         if not log_channel:
             await interaction.response.send_message(
-                f"[Warning] Could not find a log channel. Log channel is needed before clearing the appointment \n\nRun the `/settings` command --> Other Features --> Minister Scheduling --> Channel Setup and choose a log channel", ephemeral=True)
+                "[Warning] Could not find a log channel. Log channel is needed before clearing the appointment \n\nRun the `/settings` command --> Other Features --> Minister Scheduling --> Channel Setup and choose a log channel", ephemeral=True)
             return
 
         embed = discord.Embed(
@@ -1726,7 +1726,7 @@ class MinisterMenu(commands.Cog):
                 return
 
             # Update database atomically
-            for fid, appointment_type, old_time, new_time, alliance in migrations:
+            for fid, appointment_type, _old_time, new_time, _alliance in migrations:
                 self.svs_cursor.execute(
                     "UPDATE appointments SET time=? WHERE fid=? AND appointment_type=?",
                     (new_time, fid, appointment_type)
@@ -1844,7 +1844,7 @@ class MinisterMenu(commands.Cog):
         view = discord.ui.View(timeout=confirm_timeout())
 
         select = discord.ui.Select(
-            placeholder=f"Choose a schedule list type:",
+            placeholder="Choose a schedule list type:",
             options=[
                 discord.SelectOption(label="Available", description="Show only available slots", value="1"),
                 discord.SelectOption(label="Booked", description="Show only booked slots", value="2"),

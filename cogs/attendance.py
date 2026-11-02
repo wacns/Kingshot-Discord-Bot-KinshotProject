@@ -81,7 +81,7 @@ def parse_points(points_str):
         else:
             return int(float(points_str))
     except (ValueError, TypeError):
-        raise ValueError("Invalid points format")
+        raise ValueError("Invalid points format") from None
 
 class AttendanceSettingsView(discord.ui.View):
     def __init__(self, cog):
@@ -118,7 +118,7 @@ class AttendanceSettingsView(discord.ui.View):
             
             await interaction.response.edit_message(embed=embed, view=select_view)
             
-        except Exception as e:
+        except Exception:
             error_embed = self.cog._create_error_embed(
                 f"{theme.deniedIcon} Error", 
                 "An error occurred while loading settings."
@@ -161,7 +161,7 @@ class AttendanceSettingsView(discord.ui.View):
 
             await interaction.response.edit_message(embed=embed, view=select_view)
 
-        except Exception as e:
+        except Exception:
             error_embed = self.cog._create_error_embed(
                 f"{theme.deniedIcon} Error",
                 "An error occurred while loading settings."
@@ -255,7 +255,7 @@ class ReportTypeSelectView(discord.ui.View):
             
             await interaction.response.edit_message(embed=embed, view=back_view)
             
-        except Exception as e:
+        except Exception:
             error_embed = self.cog._create_error_embed(
                 f"{theme.deniedIcon} Error", 
                 "Failed to update settings."
@@ -355,7 +355,7 @@ class ReportSortSelectView(discord.ui.View):
             else:
                 raise Exception("Failed to save preference")
 
-        except Exception as e:
+        except Exception:
             error_embed = self.cog._create_error_embed(
                 f"{theme.deniedIcon} Error",
                 "Failed to update settings."
@@ -1253,7 +1253,7 @@ class PlayerSelectView(discord.ui.View):
                 self.update_action_buttons()
                 await self.update_main_embed(interaction)
 
-            except Exception as e:
+            except Exception:
                 error_embed = discord.Embed(
                     title=f"{theme.deniedIcon} Error",
                     description="An error occurred while selecting players. Please try again.",
@@ -1747,7 +1747,7 @@ class Attendance(commands.Cog):
                     ON CONFLICT(user_id) DO UPDATE SET report_type = excluded.report_type
                 """, (user_id, preference))
                 db.commit()
-        except Exception as e:
+        except Exception:
             raise
 
     def setup_database(self):
@@ -1924,7 +1924,7 @@ class Attendance(commands.Cog):
 
                 attendance_db.commit()
                 
-        except Exception as e:
+        except Exception:
             pass
 
     async def show_attendance_menu(self, interaction: discord.Interaction):
@@ -2101,7 +2101,7 @@ class Attendance(commands.Cog):
             view = SessionSelectView(sessions, alliance_id, self, is_viewing=False)
             await interaction.response.edit_message(embed=embed, view=view)
 
-        except Exception as e:
+        except Exception:
             error_embed = self._create_error_embed(
                 f"{theme.deniedIcon} Error",
                 "An error occurred while loading sessions."
@@ -2168,10 +2168,10 @@ class Attendance(commands.Cog):
                         notice = discord.Embed(
                             title=f"{theme.warnIcon} Edit via Screenshot Upload",
                             description=(
-                                f"This event was captured via **Screenshot Upload**. "
-                                f"Re-upload any screenshot from the same "
-                                f"event/legion/date in your Screenshot Upload channel "
-                                f"to reopen it in the review editor."
+                                "This event was captured via **Screenshot Upload**. "
+                                "Re-upload any screenshot from the same "
+                                "event/legion/date in your Screenshot Upload channel "
+                                "to reopen it in the review editor."
                             ),
                             color=theme.emColor2,
                         )
@@ -2261,7 +2261,7 @@ class Attendance(commands.Cog):
             else:
                 await interaction.response.edit_message(embed=embed, view=view)
             
-        except Exception as e:
+        except Exception:
             error_embed = self._create_error_embed(
                 f"{theme.deniedIcon} Error",
                 "An error occurred while loading the attendance interface."
@@ -2274,7 +2274,6 @@ class Attendance(commands.Cog):
             # Count attendance types
             present_count = sum(1 for p in selected_players.values() if p['attendance_type'] == 'present')
             absent_count = sum(1 for p in selected_players.values() if p['attendance_type'] == 'absent')
-            not_recorded_count = sum(1 for p in selected_players.values() if p['attendance_type'] == 'not_recorded')
 
             # Create new session ID if not editing
             if not is_edit:
@@ -2572,7 +2571,7 @@ class SessionSelectView(discord.ui.View):
                     embed=None,
                     view=None
                 )
-        except Exception as e:
+        except Exception:
             await interaction.edit_original_response(
                 content=f"{theme.deniedIcon} An error occurred while loading the session.",
                 embed=None,

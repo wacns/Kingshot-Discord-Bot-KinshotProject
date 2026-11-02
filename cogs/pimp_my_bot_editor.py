@@ -325,7 +325,7 @@ class ThemeEditorHub(discord.ui.View):
         # Add description and created date to embed description
         desc_parts = []
         if self.session.theme_name != "default":
-            desc_parts.append(f"*New themes inherit icons from the default theme.*")
+            desc_parts.append("*New themes inherit icons from the default theme.*")
         if description:
             desc_parts.append(f"📝 {description}")
         if created_at:

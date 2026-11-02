@@ -52,7 +52,7 @@ def pytest_ignore_collect(collection_path, config):
     try:
         import simcord  # noqa: F401
     except ImportError:
-        raise pytest.UsageError(f"--sim needs SimCord: {SIM_INSTALL_HINT}")
+        raise pytest.UsageError(f"--sim needs SimCord: {SIM_INSTALL_HINT}") from None
     return None
 
 

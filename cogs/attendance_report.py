@@ -22,8 +22,8 @@ try:
     matplotlib.use('Agg', force=False)  # non-interactive backend; avoids Tkinter (fatal off the main thread on Windows)
     import matplotlib.pyplot as plt
     import matplotlib.font_manager as fm
-    import arabic_reshaper
-    from bidi.algorithm import get_display
+    import arabic_reshaper  # noqa: F401 (availability check)
+    from bidi.algorithm import get_display  # noqa: F401 (availability check)
     
     # Load Unifont if available
     font_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fonts")

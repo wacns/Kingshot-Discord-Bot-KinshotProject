@@ -16,9 +16,10 @@ The two forbidden-on-3.11 patterns:
      Lifted in 3.12. Workaround: switch the inner quote, or bind to a
      variable.
 
-This test runs on whatever Python interpreter pytest uses, but the
-detection is interpreter-version-independent — we parse the AST and
-inspect the source span of each FormattedValue manually.
+On Python 3.12+ we parse the AST and inspect the source span of each
+FormattedValue. On 3.11 those spans cover the whole f-string, which would flag
+every f-string, so there we rely on the parse alone: 3.12-only syntax is a
+SyntaxError on 3.11 and is reported as such.
 """
 from __future__ import annotations
 
@@ -65,7 +66,10 @@ def _scan_fstrings(path: Path):
         yield (e.lineno or 1, "syntax_error", f"{e.msg}")
         return
 
-    src_lines = src.splitlines(keepends=True)
+    if sys.version_info < (3, 12):
+        return  # the successful parse above is the 3.11 check; spans are unreliable here
+
+    src.splitlines(keepends=True)
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.JoinedStr):

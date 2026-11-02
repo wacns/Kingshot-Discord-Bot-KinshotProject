@@ -255,7 +255,7 @@ async def delete_gift_code(cog, interaction: discord.Interaction):
                                 view=None
                             )
 
-                        except Exception as e:
+                        except Exception:
                             await button_interaction.response.send_message(
                                 f"{theme.deniedIcon} An error occurred while deleting the gift code.",
                                 ephemeral=True

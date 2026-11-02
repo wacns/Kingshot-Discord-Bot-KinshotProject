@@ -20,7 +20,7 @@ from __future__ import annotations
 import pytest
 
 from harness_attendance import (
-    parsers, discover_fixtures, ocr_image, load_roster, FIXTURES,
+    parsers, discover_fixtures, ocr_image, FIXTURES,
 )
 
 

@@ -62,7 +62,8 @@ def test_job_without_handler_does_not_block_others(tmp_path):
         task = asyncio.create_task(pq._processor_loop())
         for _ in range(100):
             await asyncio.sleep(0.01)
-            if ran:
+            # The unhandled-job warning is logged on the next idle pass, after the handler ran.
+            if ran and pq._unhandled_warned:
                 break
         pq._shutting_down = True
         pq._wake_event.set()

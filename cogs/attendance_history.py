@@ -276,7 +276,7 @@ class HistoryPlayerSelectView(discord.ui.View):
         items = self._filtered()
         desc = [
             f"{theme.upperDivider}",
-            f"Pick a player to see their attendance history across all events.",
+            "Pick a player to see their attendance history across all events.",
             f"{theme.membersIcon} **{len(items)}** player(s) with history"
             + (f" matching `{self.filter_text}`" if self.filter_text else "")
             + f" in **{self.alliance_name}**.",

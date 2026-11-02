@@ -5,7 +5,6 @@ image posted in that channel silently overwrote the theme icon (or imported
 any attached JSON) and the user's message was deleted.
 """
 import importlib
-from types import SimpleNamespace
 
 pmb = importlib.import_module("cogs.pimp_my_bot")
 

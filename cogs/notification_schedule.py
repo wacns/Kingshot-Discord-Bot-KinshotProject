@@ -752,7 +752,7 @@ class NotificationSchedule(commands.Cog):
                     output_lines.append(f"- **{date_str}**")
 
                     # Format events for this day
-                    for event_time, notif in days_dict[date]:
+                    for _event_time, notif in days_dict[date]:
                         line = await self._format_event_line(notif, tz, show_channel, settings.get('use_user_timezone', 0))
                         output_lines.append(f"└ {line}")
 
@@ -2403,7 +2403,7 @@ class EditBoardSettingsView(discord.ui.View):
                         # Update the board
                         await parent_view.cog.update_schedule_board(parent_view.board_id)
 
-                    except Exception as e:
+                    except Exception:
                         await modal_interaction.response.send_message(
                             f"{theme.deniedIcon} Invalid timezone format! Use UTC±X format (e.g., UTC+3, UTC-5).",
                             ephemeral=True

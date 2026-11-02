@@ -1,0 +1,86 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 4 * * 1"  # Mondays 04:00 UTC: full run including the slow screenshot-OCR suites
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Include the slow screenshot-OCR suites"
+        type: boolean
+        default: true
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Code checker (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "$(grep '^ruff' requirements-dev.txt)"
+      - run: python -m ruff check . --output-format github
+
+  python311:
+    name: Loads on Python 3.11
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Compile every module
+        run: python -m compileall -q main.py cogs install
+      - name: f-string compatibility check
+        run: |
+          python -m pip install pytest
+          python -m pytest tests/test_python311_compat.py -q
+
+  tests:
+    name: Tests (Python 3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FULL_RUN: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+          # Same swap the bot makes at startup: headless OpenCV needs no desktop libraries.
+          python -m pip uninstall -y opencv-python opencv-contrib-python
+          python -m pip install --force-reinstall --no-deps opencv-python-headless
+      - name: Run tests
+        run: |
+          if [ "$FULL_RUN" = "true" ]; then
+            python -m pytest tests -q
+          else
+            python -m pytest tests -q \
+              --ignore=tests/test_layer2_ocr.py \
+              --ignore=tests/test_attendance_ocr_layer2.py
+          fi
+      # Separate run: the menu suite leaves shared state behind that breaks other tests.
+      - name: Run Discord menu tests
+        if: ${{ !cancelled() }}
+        run: python -m pytest tests/sim --sim -q

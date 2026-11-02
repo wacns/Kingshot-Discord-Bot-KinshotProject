@@ -17,6 +17,10 @@
 !.github/
 !.github/workflows/
 !.github/workflows/docker.yml
+!.github/workflows/tests.yml
+!.gitattributes
+!requirements-dev.txt
+!ruff.toml
 !tests/
 !tests/**
 tests/sim/gallery/

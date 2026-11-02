@@ -171,7 +171,6 @@ def test_claim_returns_db_unavailable_when_kingdom_read_fails(monkeypatch):
 
 # --- batch loop: a terminal status must not retry forever ---
 
-import sqlite3
 
 
 def _setup_alliance_run(monkeypatch, status):

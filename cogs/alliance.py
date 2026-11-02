@@ -169,7 +169,7 @@ class Alliance(commands.Cog):
                 alliances = cursor.fetchall()
 
             alliance_list = ""
-            for alliance_id, name, interval in alliances:
+            for alliance_id, name, _interval in alliances:
 
                 with sqlite3.connect('db/users.sqlite', timeout=30.0) as conn:
                     cursor = conn.cursor()
@@ -188,7 +188,7 @@ class Alliance(commands.Cog):
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
-        except Exception as e:
+        except Exception:
             await interaction.response.send_message(
                 "An error occurred while fetching alliances.", 
                 ephemeral=True

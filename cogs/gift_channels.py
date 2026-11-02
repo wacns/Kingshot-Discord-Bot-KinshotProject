@@ -40,9 +40,6 @@ async def setup_gift_channel(cog, interaction: discord.Interaction):
             member_count = cursor.fetchone()[0]
             alliances_with_counts.append((alliance_id, name, member_count))
 
-    cog.cursor.execute("SELECT alliance_id, channel_id FROM giftcode_channel")
-    current_channels = dict(cog.cursor.fetchall())
-
     alliance_embed = discord.Embed(
         title=f"{theme.announceIcon} Gift Code Channel Setup",
         description=(
@@ -910,7 +907,7 @@ async def channel_history_scan(cog, interaction: discord.Interaction):
             existing_invalid = len(scan_results.get('existing_invalid', []))
             existing_pending = len(scan_results.get('existing_pending', []))
 
-            results_text = f"**Scan Complete**\n"
+            results_text = "**Scan Complete**\n"
             results_text += f"{theme.upperDivider}\n"
             results_text += f"{theme.allianceIcon} **Alliance:** {alliance_name}\n"
             results_text += f"{theme.announceIcon} **Channel:** #{channel.name}\n"
@@ -918,7 +915,7 @@ async def channel_history_scan(cog, interaction: discord.Interaction):
             results_text += f"{theme.giftIcon} **Total Codes Found:** {total_found}\n\n"
 
             if total_found > 0:
-                results_text += f"**Validation Results:**\n"
+                results_text += "**Validation Results:**\n"
                 if new_valid > 0:
                     results_text += f"{theme.verifiedIcon} New Valid Codes: {new_valid}\n"
                 if new_invalid > 0:
@@ -932,7 +929,7 @@ async def channel_history_scan(cog, interaction: discord.Interaction):
 
                 results_text += f"\n{theme.editListIcon} **Note:** A detailed summary has been posted in #{channel.name}"
             else:
-                results_text += f"No gift codes found in the scanned messages."
+                results_text += "No gift codes found in the scanned messages."
 
             await confirm_interaction.edit_original_response(
                 embed=discord.Embed(

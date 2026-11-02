@@ -91,7 +91,7 @@ def test_confirmed_stop_cancels_the_job(monkeypatch):
     async def edit_message(**kw):
         edits.append(kw)
 
-    inter = types.SimpleNamespace(response=types.SimpleNamespace(edit_message=edit_message,
+    types.SimpleNamespace(response=types.SimpleNamespace(edit_message=edit_message,
                                                                  is_done=lambda: False))
 
     async def run():
@@ -119,7 +119,7 @@ def test_stopping_the_auto_scan_switches_it_off(monkeypatch):
     async def edit_message(**kw):
         edits.append(kw)
 
-    inter = types.SimpleNamespace(response=types.SimpleNamespace(edit_message=edit_message))
+    types.SimpleNamespace(response=types.SimpleNamespace(edit_message=edit_message))
 
     async def run():
         view = bot_health.RunningNowView(_cog(pq))

@@ -5,7 +5,6 @@ logic are exercised by the test suite without spinning up Discord.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import sqlite3
 import sys

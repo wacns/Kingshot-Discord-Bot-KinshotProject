@@ -32,7 +32,7 @@ def main():
         print("-" * 80)
         print(f"primary OCR text:\n{primary_text!r}")
         print(f"\nrepaired:\n{repaired!r}")
-        print(f"\nparsed result:")
+        print("\nparsed result:")
         print(json.dumps({
             "trap":         result["trap"],
             "rallies":      result["rallies"],

@@ -1,0 +1,14 @@
+# Code checker settings. Only bug-catching rules are on; formatting is not enforced.
+# Run with: python -m ruff check .
+target-version = "py311"
+extend-exclude = ["bot_venv", "db", "log", "backups", "models", "tests/sim/gallery"]
+
+[lint]
+# F  = pyflakes (undefined/unused names, broken f-strings)
+# E9 = syntax and indentation errors
+# B  = bugbear (likely bugs such as loop-variable capture)
+select = ["F", "E9", "B"]
+ignore = [
+    "B905",  # zip(strict=...) would change behaviour when lengths differ
+    "B008",  # function calls in defaults are idiomatic for discord.py
+]

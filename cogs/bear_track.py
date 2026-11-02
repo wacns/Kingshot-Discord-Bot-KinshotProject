@@ -147,9 +147,6 @@ if PIL_AVAILABLE:
         OCR_IMPORT_ERROR = f"{type(e).__name__}: {e}"
         logger.warning(f"OCR disabled — could not import rapidocr: {OCR_IMPORT_ERROR}")
         print(f"[WARNING] OCR disabled — could not import rapidocr: {OCR_IMPORT_ERROR}")
-    except Exception as e:
-        logger.error(f"Failed to initialize RapidOCR: {e}")
-        print(f"[ERROR] Failed to initialize RapidOCR: {e}")
 
 os.makedirs("db", exist_ok=True)
 
@@ -4257,7 +4254,7 @@ class BearHuntReviewView(discord.ui.View):
         start = self.page * self.ROWS_PER_PAGE
         end = min(start + self.ROWS_PER_PAGE, len(self.rows))
         lines = []
-        for i, r in enumerate(self.rows[start:end], start=start):
+        for _i, r in enumerate(self.rows[start:end], start=start):
             rank_str = f"**#{r['rank']}**" if r['rank'] is not None else "**?**"
             icon = _STATUS_ICONS.get(r['status'], '')
             status = r['status']
@@ -4516,9 +4513,9 @@ class BearHuntReviewView(discord.ui.View):
             embed = discord.Embed(
                 title=f"{theme.hourglassIcon} Bear Hunt Review Expired",
                 description=(
-                    f"This review timed out after 2 hours of inactivity and "
-                    f"can no longer be submitted. Upload the screenshots again "
-                    f"to start a new review."
+                    "This review timed out after 2 hours of inactivity and "
+                    "can no longer be submitted. Upload the screenshots again "
+                    "to start a new review."
                 ),
                 color=theme.emColor2,
             )
@@ -4546,13 +4543,13 @@ class BearHuntReviewView(discord.ui.View):
         picker = RetryOcrLanguagePicker(self, current_primary)
         await interaction.response.send_message(
             content=(
-                f"Pick an OCR engine to retry with. New rows the chosen "
-                f"engine finds are **added or used to upgrade weak matches** "
-                f"in the review below. Your existing confirmed rows stay "
-                f"intact.\n"
-                f"Your alliance's permanent OCR setting is not changed; "
-                f"adjust it under **Settings → Bear Tracking → OCR Languages** "
-                f"if a different engine works better."
+                "Pick an OCR engine to retry with. New rows the chosen "
+                "engine finds are **added or used to upgrade weak matches** "
+                "in the review below. Your existing confirmed rows stay "
+                "intact.\n"
+                "Your alliance's permanent OCR setting is not changed; "
+                "adjust it under **Settings → Bear Tracking → OCR Languages** "
+                "if a different engine works better."
             ),
             view=picker,
             ephemeral=True,

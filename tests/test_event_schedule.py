@@ -58,7 +58,7 @@ def test_reference_date_falls_on_named_weekday(event, weekday):
 
 
 def test_every_reference_date_parses():
-    for name, cfg in EVENT_CONFIG.items():
+    for _name, cfg in EVENT_CONFIG.items():
         if "reference_date" in cfg:
             # Must not raise.
             _reference(cfg)

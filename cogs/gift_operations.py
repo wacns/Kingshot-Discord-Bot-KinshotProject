@@ -238,7 +238,7 @@ class GiftOperations(commands.Cog):
         channel_configs = self.cursor.fetchall()
 
         invalid_channels = []
-        for channel_id, alliance_id in channel_configs:
+        for channel_id, _alliance_id in channel_configs:
             channel = self.bot.get_channel(channel_id)
             if not channel:
                 if await self._channel_is_gone(channel_id):

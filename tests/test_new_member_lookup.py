@@ -309,7 +309,6 @@ def test_bulk_add_keeps_placeholders_once_the_budget_runs_out(dbs, monkeypatch):
 
 @pytest.mark.parametrize("ready", [True, False])
 def test_member_list_hints_mention_player_sync_only_when_ready(ready):
-    members = [(1, "", 30, 245)]
     view = member_ops.ManageMembersView.__new__(member_ops.ManageMembersView)
     view.all_members = [{"fid": 1, "nickname": "", "furnace_lv": 30, "kid": 245, "power": 5, "combat_power": None}]
     view.sync_ready = ready

@@ -85,7 +85,7 @@ def test_merge_by_boxes_keeps_good_primary_name():
     primary = [("BlackMask", _box(10, 100)), ("9,287,178,025", _box(300, 100))]
     fallback = [("garbage", _box(12, 101)), ("9287178025", _box(305, 101))]
     img_rows = {9287178025: {"name": "BlackMask", "damage": 9287178025, "rank": 12}}
-    filled = bt.merge_fallback_rows_by_boxes(img_rows, primary, fallback, ROSTER, "cyrillic")
+    bt.merge_fallback_rows_by_boxes(img_rows, primary, fallback, ROSTER, "cyrillic")
     assert img_rows[9287178025]["name"] == "BlackMask"  # already matches roster, untouched
 
 

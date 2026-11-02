@@ -961,7 +961,7 @@ class ThemeMenuView(discord.ui.View):
         if server_theme:
             embed.add_field(name="This Server", value=f"{server_theme} {theme.checkIcon}", inline=True)
         else:
-            embed.add_field(name="This Server", value=f"(using global)", inline=True)
+            embed.add_field(name="This Server", value="(using global)", inline=True)
 
         embed.add_field(name="Total Themes", value=str(len(themes)), inline=True)
 

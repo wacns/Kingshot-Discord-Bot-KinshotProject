@@ -850,7 +850,7 @@ class WizardTimezoneModal(discord.ui.Modal, title="Set Timezone"):
             await interaction.response.defer()
             await self.parent_view.show(interaction)
 
-        except Exception as e:
+        except Exception:
             await interaction.response.send_message(
                 f"{theme.deniedIcon} Invalid timezone! Please use a valid timezone name (e.g., UTC, America/New_York, UTC+2).",
                 ephemeral=True
@@ -1530,12 +1530,12 @@ class DualLegionConfigView(discord.ui.View):
 
         if legion1_display:
             if legion1_display == "none":
-                description += f"\n\n**Legion 1:** Disabled"
+                description += "\n\n**Legion 1:** Disabled"
             else:
                 description += f"\n\n**Legion 1:** {legion1_display} UTC"
         if legion2_display:
             if legion2_display == "none":
-                description += f"\n**Legion 2:** Disabled"
+                description += "\n**Legion 2:** Disabled"
             else:
                 description += f"\n**Legion 2:** {legion2_display} UTC"
 
@@ -1893,7 +1893,6 @@ class CaesaresFuryConfigView(discord.ui.View):
     async def show(self, interaction: discord.Interaction):
         """Show Caesares Fury configuration"""
         icon = get_event_icon("Caesares Fury")
-        config = get_event_config("Caesares Fury")
         next_date = calculate_next_occurrence("Caesares Fury", guild_id=self.session.guild_id)
 
         # Calculate the 3-day window
@@ -2517,7 +2516,6 @@ class WizardPreviewView(discord.ui.View):
             updated_count = 0
             event_changes = {}
             from datetime import datetime, timedelta
-            import pytz
 
             tz = get_timezone(self.session.timezone)
             now = datetime.now(tz)
@@ -2965,7 +2963,6 @@ class WizardCompletionView(discord.ui.View):
                     ephemeral=True
                 )
                 return
-            wizard_batch_id = f"wizard_{self.session.guild_id}_{self.session.channel_id}"
             notifications = notification_cog.get_wizard_notifications_for_channel(
                 self.session.guild_id,
                 self.session.channel_id
@@ -3004,7 +3001,7 @@ class WizardCompletionView(discord.ui.View):
                 await schedule_cog.update_schedule_board(board_id)
                 embed = discord.Embed(
                     title=f"{theme.verifiedIcon} Schedule Board Updated!",
-                    description=f"The existing channel-specific schedule board has been updated with your new notifications.",
+                    description="The existing channel-specific schedule board has been updated with your new notifications.",
                     color=theme.emColor3
                 )
                 if server_boards_count > 0:

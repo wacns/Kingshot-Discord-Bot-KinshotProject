@@ -276,8 +276,8 @@ def render_info_message(channel_id: int) -> str:
     lines.append("• OCR isn't perfect; review and edit the parsed data before submitting.")
     lines.append("• Save your current event before starting the next upload.")
     lines.append(
-        f"• Set your in-game interface language to **English** before "
-        f"taking screenshots. Other languages aren't supported yet."
+        "• Set your in-game interface language to **English** before "
+        "taking screenshots. Other languages aren't supported yet."
     )
     lines.append(f"{theme.lowerDivider}")
     lines.append("")
@@ -654,7 +654,7 @@ class OCRChannelEditView(discord.ui.View):
             f"**Channel:** <#{self.channel_id}>  ·  "
             f"**Alliance:** `{_alliance_name(self.alliance_id)}`",
             "",
-            f"**Configure this channel**",
+            "**Configure this channel**",
             f"{theme.upperDivider}",
             f"{theme.listIcon} **Accepted event types**",
         ]

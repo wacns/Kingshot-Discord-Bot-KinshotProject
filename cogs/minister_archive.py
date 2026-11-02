@@ -1167,7 +1167,7 @@ class MinisterArchive(commands.Cog):
             "archive_created": f"{theme.saveIcon}"
         }
 
-        for timestamp, username, action_type, appointment_type, fid, nickname, old_time, new_time, alliance_name, additional_data in page_records:
+        for timestamp, username, action_type, appointment_type, _fid, nickname, old_time, new_time, _alliance_name, additional_data in page_records:
             emoji = action_emojis.get(action_type, f"{theme.listIcon}")
             dt = datetime.fromisoformat(timestamp).strftime("%m/%d %H:%M")
 

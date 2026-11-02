@@ -639,13 +639,6 @@ def needs_scan(fid):
                             (fid,)).fetchone() is not None
 
 
-
-def needs_scan(fid):
-    with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn:
-        return conn.execute(f"SELECT 1 FROM users WHERE fid = ? AND {_NEEDS_SCAN}",
-                            (fid,)).fetchone() is not None
-
-
 def _write_scan(sql, params):
     with closing(sqlite3.connect('db/users.sqlite', timeout=30.0)) as conn:
         conn.execute(sql, params)

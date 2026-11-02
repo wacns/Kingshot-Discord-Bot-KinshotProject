@@ -436,11 +436,11 @@ class ImportSourceView(discord.ui.View):
         embed = discord.Embed(
             title=f"{theme.importIcon} Upload Database.db",
             description=(
-                f"Post the JS bot's **Database.db** (or a zip containing it) as an "
-                f"attachment **in this channel** within the next 5 minutes.\n\n"
-                f"You can find the file in the JS bot's folder on the server it "
-                f"runs on. The message is removed automatically after the file "
-                f"is received."
+                "Post the JS bot's **Database.db** (or a zip containing it) as an "
+                "attachment **in this channel** within the next 5 minutes.\n\n"
+                "You can find the file in the JS bot's folder on the server it "
+                "runs on. The message is removed automatically after the file "
+                "is received."
             ),
             color=theme.emColor1,
         )

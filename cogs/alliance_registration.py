@@ -314,7 +314,7 @@ class AllianceRegistration(commands.Cog):
         rows = self._linked_fids_for(interaction.user.id)
         cur = (current or "").lower()
         choices = []
-        for fid, nickname, alliance, _ in rows:
+        for fid, nickname, _alliance, _ in rows:
             label = f"{nickname or '(unnamed)'} ({fid})"
             if cur and cur not in str(fid) and cur not in (nickname or "").lower():
                 continue

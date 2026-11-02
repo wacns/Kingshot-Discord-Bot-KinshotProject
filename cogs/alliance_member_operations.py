@@ -5,9 +5,8 @@ import discord
 from discord.ext import commands
 import sqlite3
 import asyncio
-import time
 import logging
-from typing import List, Optional
+from typing import Optional
 from datetime import datetime, timezone
 import os
 import csv
@@ -2154,7 +2153,7 @@ class AllianceMemberOperations(commands.Cog):
                     log_file.write(f"ERROR: Log record error: {str(e)}\n")
 
             with open(log_file_path, 'a', encoding='utf-8') as log_file:
-                log_file.write(f"\nFinal Results:\n")
+                log_file.write("\nFinal Results:\n")
                 log_file.write(f"Successfully Added: {added_count}\n")
                 log_file.write(f"Failed: {error_count}\n")
                 log_file.write(f"Already Exists: {already_exists_count}\n")
@@ -2340,7 +2339,7 @@ class AllianceMemberOperations(commands.Cog):
                 row = []
                 # Use the appropriate columns list based on whether it's a single or all export
                 columns_to_use = selected_columns if alliance_id == "all" else filtered_columns
-                for i, (db_col, header) in enumerate(columns_to_use):
+                for i, (db_col, _header) in enumerate(columns_to_use):
                     value = member[i]
                     
                     # Special formatting for TC Level
@@ -3181,7 +3180,7 @@ class ExportFormatSelectView(discord.ui.View):
         include_alliance = self.alliance_id == "all"
         if include_alliance:
             column_embed.description = (
-                f"**Export Type:** ALL ALLIANCES\n\n"
+                "**Export Type:** ALL ALLIANCES\n\n"
                 "Click the buttons to toggle columns on/off.\n"
                 "All columns are selected by default.\n\n"
                 "**Available Columns:**\n"
@@ -3639,8 +3638,8 @@ class AlliancePowerRankingsView(discord.ui.View):
         pdeltas = alliance_power_changes.latest_deltas(fids, "power")
 
         lines = [
-            f"**Name** (`ID`) — **Power** — `CP` **Combat Power** · "
-            f"times shown are last-updated.",
+            "**Name** (`ID`) — **Power** — `CP` **Combat Power** · "
+            "times shown are last-updated.",
             f"{theme.upperDivider}",
         ]
         if not page:

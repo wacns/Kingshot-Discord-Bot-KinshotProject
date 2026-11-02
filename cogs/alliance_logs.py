@@ -372,7 +372,7 @@ class AllianceLogs(commands.Cog):
                     return
 
                 alliances_with_counts = []
-                for alliance_id, channel_id in log_entries:
+                for alliance_id, _channel_id in log_entries:
                     with sqlite3.connect('db/alliance.sqlite', timeout=30.0) as conn:
                         cursor = conn.cursor()
                         cursor.execute("SELECT name FROM alliance_list WHERE alliance_id = ?", (alliance_id,))

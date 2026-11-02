@@ -1194,7 +1194,7 @@ class BotHealth(commands.Cog):
             try:
                 size_before = os.path.getsize(db_path)
 
-                def do_vacuum():
+                def do_vacuum(db_path=db_path):
                     conn = self._db(db_path, timeout=60.0)
                     conn.execute("VACUUM")
                     conn.close()
@@ -1244,7 +1244,7 @@ class BotHealth(commands.Cog):
             scheduled_passed = (now.hour, now.minute) >= (config['cleanup_hour'], config['cleanup_minute'])
             if scheduled_passed and last_cleanup != now.date().isoformat():
                 self.logger.info("Starting scheduled cleanup")
-                results = await self.run_cleanup()
+                await self.run_cleanup()
 
                 # Cleanup old archives
                 await self.cleanup_old_archives(30)
@@ -1309,7 +1309,7 @@ class BotHealth(commands.Cog):
         caches so it matches the container's real disk usage / quota."""
         bot_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         total = 0
-        for root, dirs, files in os.walk(bot_dir):
+        for root, _dirs, files in os.walk(bot_dir):
             for f in files:
                 try:
                     total += os.path.getsize(os.path.join(root, f))
