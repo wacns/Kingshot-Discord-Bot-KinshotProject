@@ -156,3 +156,20 @@ A release can be cut after any phase.
 - Whether `bot_health.py`'s existing `_db()` helper is replaced by `db.connect` or kept
   as a thin wrapper around it.
 - Ordering of cogs inside phase 3, beyond "hot paths first".
+
+## Outcome and scope decision (2026-11-02, after implementation)
+
+Implemented on branch `db-cleanup` (plan: `docs/superpowers/plans/2026-11-02-database-access.md`).
+Goals 1, 2 and 4 are met. Goal 3 is met for short-lived database work in the background
+paths (moved behind `db.run`), but the busiest background paths that use a cog's
+**long-lived** connection on the event loop — the notification scheduler
+(`notification_system.process_notification`), the gift-code validation loops in
+`gift_redemption`, the `on_message` listeners in `gift_operations` / `bear_track`, the
+`notification_schedule` loops — still do their database work on the loop. Phase 4 allows
+single-threaded long-lived connections, so this is not a regression.
+
+**Owner decision:** accept this narrower scope for this release; moving that long-lived-
+connection work off the event loop is the **next stage**.
+
+Also changed by ruling during implementation: sites that relied on SQLite's implicit 5 s
+lock timeout now use the 30 s default (one value for the whole bot).
