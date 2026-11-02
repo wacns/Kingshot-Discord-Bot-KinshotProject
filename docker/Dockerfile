@@ -1,6 +1,6 @@
 FROM python:3.12.12-slim-bookworm
 LABEL maintainer="yolo <justinyolo33@gmail.com>"
-LABEL org.opencontainers.image.source=https://github.com/kingshot-project/Kingshot-Discord-Bot
+LABEL org.opencontainers.image.source=https://github.com/wacns/Kingshot-Discord-Bot-KinshotProject
 
 COPY bootstrap.sh /bootstrap.sh
 

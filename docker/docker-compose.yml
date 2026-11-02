@@ -1,6 +1,6 @@
 services:
   kingshot-discord-bot:
-    image: ghcr.io/kingshot-project/kingshot-discord-bot:latest
+    image: ghcr.io/wacns/kingshot-discord-bot:latest
     container_name: kingshot-discord-bot
     volumes:
       - /opt/docker/kingshot/db/:/app/db

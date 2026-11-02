@@ -42,5 +42,5 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/kingshot-project/kingshot-discord-bot:latest
-            ghcr.io/kingshot-project/kingshot-discord-bot:${{ github.event.inputs.tag || github.event.release.tag_name }}
+            ghcr.io/wacns/kingshot-discord-bot:latest
+            ghcr.io/wacns/kingshot-discord-bot:${{ github.event.inputs.tag || github.event.release.tag_name }}
