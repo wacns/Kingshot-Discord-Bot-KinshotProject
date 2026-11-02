@@ -205,3 +205,50 @@ def test_connect_rollback_failure_does_not_mask_original_error(monkeypatch):
         with db.connect(db.USERS):
             raise ValueError("original")
     assert closed == [True]
+
+
+def _persistent_with_open_write(path, monkeypatch, flag=True):
+    if flag:
+        monkeypatch.setenv("KSBOT_DB_THREAD_CHECK", "1")
+    else:
+        monkeypatch.delenv("KSBOT_DB_THREAD_CHECK", raising=False)
+    conn = db.connect_persistent(path)
+    _make_table(conn)
+    conn.commit()
+    conn.execute("INSERT INTO t VALUES (1)")  # deliberately uncommitted
+    return conn
+
+
+def test_run_refuses_while_persistent_conn_has_open_write(monkeypatch):
+    conn = _persistent_with_open_write(db.USERS, monkeypatch)
+    try:
+        with pytest.raises(RuntimeError, match="uncommitted transaction"):
+            asyncio.run(db.run(db.USERS, lambda c: None))
+    finally:
+        conn.close()
+
+
+def test_run_allows_after_commit(monkeypatch):
+    conn = _persistent_with_open_write(db.USERS, monkeypatch)
+    try:
+        conn.commit()
+        assert asyncio.run(db.fetchone(db.USERS, "SELECT count(*) FROM t")) == (1,)
+    finally:
+        conn.close()
+
+
+def test_run_ignores_other_files(monkeypatch):
+    conn = _persistent_with_open_write(db.USERS, monkeypatch)
+    try:
+        assert asyncio.run(db.run(db.ALLIANCE, lambda c: 7)) == 7
+    finally:
+        conn.close()
+
+
+def test_run_check_inert_without_flag(monkeypatch):
+    conn = _persistent_with_open_write(db.USERS, monkeypatch, flag=False)
+    try:
+        # unregistered, so the guard does not fire; a WAL read does not block on the writer
+        assert asyncio.run(db.fetchone(db.USERS, "SELECT count(*) FROM t")) == (0,)
+    finally:
+        conn.close()
