@@ -269,3 +269,102 @@ def test_background_paths_do_not_block():
         "path - move it into `await db.run(db.<CONST>, _work, ...)` or db.fetch*/execute:\n  "
         + "\n  ".join(offenders)
     )
+
+
+# Stage 2: the same background paths must also stop using a cog's long-lived
+# connection (`self.conn`, `cog.cursor`, `self.cog.alliance_cursor`, ...). A
+# 30 s lock wait on one of those freezes the event loop just like a fresh
+# connect. Each listed function is a target or a helper a conversion task
+# moves into `db.run`. Nested defs/lambdas are exempt (they run in workers).
+LONG_LIVED_TARGETS: dict[str, set[str]] = {
+    "cogs/process_queue.py": {
+        "_processor_loop", "_warn_unhandled", "get_next_queued", "mark_active",
+        "mark_completed", "mark_failed", "mark_cancelled", "requeue",
+    },
+    "cogs/gift_redemption.py": {"handle_gift_validate_process", "periodic_validation_loop_body"},
+    "cogs/gift_operations.py": {"on_message"},
+    "cogs/notification_system.py": {
+        "check_notifications", "process_notification", "_notification_weekdays",
+        "delete_previous_notifications", "get_notification_embed", "store_message_for_deletion",
+    },
+    "cogs/notification_schedule.py": {"daily_refresh_loop", "urgency_update_loop", "update_schedule_board"},
+    "cogs/bear_track.py": {"on_message", "process_bear_hunt_data"},
+}
+
+# Files not converted yet; each conversion task removes its files. Task 6
+# deletes this set and its stale test once empty.
+LONG_LIVED_PENDING: set[str] = set(LONG_LIVED_TARGETS)
+
+LONG_LIVED_OPS = {
+    "execute", "executemany", "executescript", "commit", "fetchone", "fetchall", "cursor",
+}
+
+
+def _is_long_lived_use(node: ast.AST) -> bool:
+    """`<self|cog|self.cog>.<...conn.../...cursor...>.<op>(...)`."""
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+        return False
+    if node.func.attr not in LONG_LIVED_OPS:
+        return False
+    holder = node.func.value
+    if not isinstance(holder, ast.Attribute):
+        return False
+    if "conn" not in holder.attr and "cursor" not in holder.attr:
+        return False
+    base = holder.value
+    if isinstance(base, ast.Name):
+        return base.id in {"self", "cog"}
+    return (
+        isinstance(base, ast.Attribute)
+        and base.attr == "cog"
+        and isinstance(base.value, ast.Name)
+        and base.value.id == "self"
+    )
+
+
+def _direct_long_lived_uses(func: ast.AST):
+    """Line numbers of long-lived connection calls in func's own body."""
+    stack = list(ast.iter_child_nodes(func))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        if _is_long_lived_use(node):
+            yield node.lineno
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _long_lived_scan(rel: str):
+    """(offender strings, names of listed functions found) for one file."""
+    found = set()
+    offenders = []
+    for func in _named_functions(_parse(ROOT / rel), LONG_LIVED_TARGETS[rel]):
+        found.add(func.name)
+        for ln in sorted(_direct_long_lived_uses(func)):
+            offenders.append(f"{rel}:{ln} (in {func.name})")
+    return offenders, found
+
+
+def test_targets_do_not_use_long_lived_connections():
+    offenders = []
+    missing = []
+    for rel in LONG_LIVED_TARGETS:
+        file_offenders, found = _long_lived_scan(rel)
+        missing += [f"{rel}:{n}" for n in sorted(LONG_LIVED_TARGETS[rel] - found)]
+        if rel not in LONG_LIVED_PENDING:
+            offenders += file_offenders
+    assert not missing, f"LONG_LIVED_TARGETS entries not found: {missing}"
+    assert not offenders, (
+        "long-lived connection/cursor used directly on the event loop in a "
+        "background path - move the work into `await db.run(db.<CONST>, _work, ...)` "
+        "or db.fetch*/execute:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_long_lived_pending_only_shrinks():
+    unknown = sorted(LONG_LIVED_PENDING - set(LONG_LIVED_TARGETS))
+    assert not unknown, f"LONG_LIVED_PENDING names files not in LONG_LIVED_TARGETS: {unknown}"
+    stale = [rel for rel in sorted(LONG_LIVED_PENDING) if not _long_lived_scan(rel)[0]]
+    assert not stale, (
+        f"{stale} are converted: remove them from LONG_LIVED_PENDING so the guard enforces them"
+    )
