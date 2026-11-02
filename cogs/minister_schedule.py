@@ -46,9 +46,9 @@ class ChannelSelect(discord.ui.ChannelSelect):
         selected_channel = self.values[0]
         channel_id = selected_channel.id
 
-        with db.connect(db.SVS) as svs_conn:
-            svs_cursor = svs_conn.cursor()
-            try:
+        try:
+            with db.connect(db.SVS) as svs_conn:
+                svs_cursor = svs_conn.cursor()
                 # Check if we're updating a minister channel
                 if self.context.endswith("channel"):
                     # Get the activity name from the context (e.g., "Construction Day channel" -> "Construction Day")
@@ -138,17 +138,17 @@ class ChannelSelect(discord.ui.ChannelSelect):
                         view=None
                     )
 
-            except Exception as e:
-                try:
-                    await interaction.response.send_message(
-                        f"{theme.deniedIcon} Failed to update:\n```{e}```",
-                        ephemeral=True
-                    )
-                except discord.InteractionResponded:
-                    await interaction.followup.send(
-                        f"{theme.deniedIcon} Failed to update:\n```{e}```",
-                        ephemeral=True
-                    )
+        except Exception as e:
+            try:
+                await interaction.response.send_message(
+                    f"{theme.deniedIcon} Failed to update:\n```{e}```",
+                    ephemeral=True
+                )
+            except discord.InteractionResponded:
+                await interaction.followup.send(
+                    f"{theme.deniedIcon} Failed to update:\n```{e}```",
+                    ephemeral=True
+                )
 
 class MinisterSchedule(commands.Cog):
     def __init__(self, bot):
