@@ -4,6 +4,10 @@ import os
 import shutil
 import stat
 
+# GitHub repo ("owner/name") that updates, self-heal and requirements.txt are
+# pulled from. Override with the BOT_UPDATE_REPO env var.
+UPDATE_REPO = os.environ.get("BOT_UPDATE_REPO", "").strip() or "wacns/Kingshot-Discord-Bot-KinshotProject"
+
 # Cap glibc malloc arenas before anything allocates: glibc keeps a per-thread
 # arena and never frees it, so OCR across many to_thread workers grows RSS until
 # a 512MB container OOM-kills the bot. Must be set before glibc inits, so re-exec
@@ -74,7 +78,7 @@ except ImportError:
     # cogs/ is missing (likely a bare main.py drop). Fetch the full source for this branch and restart.
     _bootstrap_from_main_branch(os.environ.get(
         "BOT_BOOTSTRAP_URL",
-        "https://github.com/kingshot-project/Kingshot-Discord-Bot/archive/refs/heads/main.zip",
+        f"https://github.com/{UPDATE_REPO}/archive/refs/heads/main.zip",
     ))
     print("Download complete. Restarting...")
     if sys.platform == "win32":
@@ -408,7 +412,7 @@ def has_obsolete_requirements():
 UPDATE_SOURCES = [
     {
         "name": "GitHub",
-        "api_url": "https://api.github.com/repos/kingshot-project/Kingshot-Discord-Bot/releases/latest",
+        "api_url": f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest",
         "primary": True
     }
 ]
@@ -497,9 +501,9 @@ def download_requirements_from_release(beta_mode=False):
     # Build raw URL based on source and mode
     if source_name == "GitHub" or "GitHub" in source_name:
         if beta_mode:
-            raw_url = "https://raw.githubusercontent.com/kingshot-project/Kingshot-Discord-Bot/main/requirements.txt"
+            raw_url = f"https://raw.githubusercontent.com/{UPDATE_REPO}/main/requirements.txt"
         else:
-            raw_url = f"https://raw.githubusercontent.com/kingshot-project/Kingshot-Discord-Bot/refs/tags/{tag}/requirements.txt"
+            raw_url = f"https://raw.githubusercontent.com/{UPDATE_REPO}/refs/tags/{tag}/requirements.txt"
     else:
         return False
 
@@ -696,7 +700,7 @@ def setup_dependencies(beta_mode=False):
 
     if not os.path.exists("requirements.txt"):
         if not download_requirements_from_release(beta_mode=beta_mode):
-            startup.phase_fail("Dependencies failed", details=["Could not download requirements.txt"], fix="Download the complete bot package from: https://github.com/kingshot-project/Kingshot-Discord-Bot/releases")
+            startup.phase_fail("Dependencies failed", details=["Could not download requirements.txt"], fix=f"Download the complete bot package from: https://github.com/{UPDATE_REPO}/releases")
             return False
 
     if not check_and_install_requirements():

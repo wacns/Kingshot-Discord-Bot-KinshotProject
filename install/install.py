@@ -29,7 +29,7 @@ colorama.init()
 
 print(f"{F.YELLOW}Getting latest release info...{R}")
 
-latest_release_url = "https://api.github.com/repos/kingshot-project/Kingshot-Discord-Bot/releases/latest"
+latest_release_url = "https://api.github.com/repos/wacns/Kingshot-Discord-Bot-KinshotProject/releases/latest"
 
 latest_release_resp = requests.get(latest_release_url)
 

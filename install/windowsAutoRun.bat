@@ -61,7 +61,7 @@ IF EXIST install.py (
 	echo :
 	echo I will download the latest install.py from GitHub...
 	timeout 5
-	curl -o install.py https://raw.githubusercontent.com/kingshot-project/Kingshot-Discord-Bot/main/install/install.py
+	curl -o install.py https://raw.githubusercontent.com/wacns/Kingshot-Discord-Bot-KinshotProject/main/install/install.py
 	goto :installKS
 )
 

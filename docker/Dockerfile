@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y curl ca-certifi
 RUN pip install --upgrade pip
 RUN mkdir -p /app
 # Download latest release directly from GitHub
-RUN curl -sL $(curl -s https://api.github.com/repos/kingshot-project/Kingshot-Discord-Bot/releases/latest | grep "zipball_url" | cut -d '"' -f 4) -o /tmp/bot.zip \
+RUN curl -sL $(curl -s https://api.github.com/repos/wacns/Kingshot-Discord-Bot-KinshotProject/releases/latest | grep "zipball_url" | cut -d '"' -f 4) -o /tmp/bot.zip \
     && unzip /tmp/bot.zip -d /tmp/bot \
     && mv /tmp/bot/*/* /app/ \
     && rm -rf /tmp/bot.zip /tmp/bot
