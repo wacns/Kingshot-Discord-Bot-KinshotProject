@@ -12,9 +12,14 @@ LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
-    """Asyncio on Windows and the screenshot preview need loopback; everything else is blocked."""
+    """Asyncio on Windows and the screenshot preview need loopback; everything else is blocked.
+
+    Name lookups are blocked too: Windows' proactor loop connects without going
+    through socket.connect, but every platform resolves the host first, so this
+    catches outside calls on Windows as well as Linux."""
     attempts = []
     real_connect = socket.socket.connect
+    real_getaddrinfo = socket.getaddrinfo
 
     def guarded_connect(sock, address):
         if isinstance(address, tuple) and address[0] in LOOPBACK:
@@ -22,7 +27,15 @@ def no_network(monkeypatch):
         attempts.append(address)
         raise OSError(f"network blocked in the SimCord suite: {address}")
 
+    def guarded_getaddrinfo(host, *args, **kwargs):
+        name = host.decode() if isinstance(host, bytes) else host
+        if name is None or name in LOOPBACK:
+            return real_getaddrinfo(host, *args, **kwargs)
+        attempts.append(name)
+        raise socket.gaierror(f"name lookup blocked in the SimCord suite: {name}")
+
     monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket, "getaddrinfo", guarded_getaddrinfo)
     yield
     assert not attempts, f"code tried to reach the network: {attempts}"
 

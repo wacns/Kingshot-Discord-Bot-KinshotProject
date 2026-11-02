@@ -200,6 +200,22 @@ def seed_admins(sim: Sim, scenario: str) -> None:
     sim.users["member"] = sim.guild.add_member(sim.env.create_user("plain-member"))
 
 
+class _OfflineBot(commands.Bot):
+    """Answers Bot Health's gift-code API probes locally.
+
+    Bot Health probes both APIs as soon as the bot is ready. discord.py builds a
+    fresh module on every load, so a class-level patch would not stick; patching
+    the instance here runs before its loop task gets a turn on the event loop."""
+
+    async def add_cog(self, cog, /, **kwargs):
+        if type(cog).__name__ == "BotHealth":
+            async def online():
+                return {"status": "healthy", "message": "Online"}
+            cog._probe_wos_api = online
+            cog._probe_gift_distribution_api = online
+        return await super().add_cog(cog, **kwargs)
+
+
 def _forget_cogs() -> None:
     for name in [m for m in sys.modules if m == "cogs" or m.startswith("cogs.")]:
         del sys.modules[name]
@@ -211,7 +227,7 @@ async def running(scenario: str = "populated", *, bot_admin: bool = True):
     build_schema()
     intents = discord.Intents.default()
     intents.message_content = True
-    bot = commands.Bot(command_prefix="/", intents=intents)
+    bot = _OfflineBot(command_prefix="/", intents=intents)
     try:
         async with simcord.run(bot) as env:
             for cog in production_cogs():
