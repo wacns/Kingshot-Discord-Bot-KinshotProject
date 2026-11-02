@@ -363,10 +363,8 @@ class BotStartup(commands.Cog):
         self.bot.startup_dm_sent = True
 
         try:
-            with db.connect(db.SETTINGS) as settings_db:
-                cursor = settings_db.cursor()
-                cursor.execute("SELECT id FROM admin WHERE is_initial = 1 LIMIT 1")
-                result = cursor.fetchone()
+            result = await db.fetchone(
+                db.SETTINGS, "SELECT id FROM admin WHERE is_initial = 1 LIMIT 1")
             
             if result:
                 admin_id = result[0]
@@ -416,61 +414,68 @@ class BotStartup(commands.Cog):
 
                     await admin_user.send(embed=status_embed)
 
-                    with db.connect(db.ALLIANCE) as alliance_db:
+                    def _load_alliance_overview(alliance_db):
                         cursor = alliance_db.cursor()
                         cursor.execute("SELECT alliance_id, name FROM alliance_list")
                         alliances = cursor.fetchall()
+                        rows = []
+                        if not alliances:
+                            return alliances, rows
+                        # One connection per DB for the whole loop, not per alliance.
+                        with db.connect(db.USERS) as users_db, \
+                             db.connect(db.GIFTCODE) as gift_db:
+                            users_cur = users_db.cursor()
+                            alliance_cur = alliance_db.cursor()
+                            gift_cur = gift_db.cursor()
+                            for alliance_id, _name in alliances:
+                                users_cur.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,))
+                                user_count = users_cur.fetchone()[0]
+                                alliance_cur.execute("SELECT discord_server_id FROM alliance_list WHERE alliance_id = ?", (alliance_id,))
+                                discord_server = alliance_cur.fetchone()
+                                alliance_cur.execute("SELECT channel_id FROM alliancesettings WHERE alliance_id = ?", (alliance_id,))
+                                settings = alliance_cur.fetchone()
+                                gift_cur.execute("SELECT status FROM giftcodecontrol WHERE alliance_id = ?", (alliance_id,))
+                                gift_status = gift_cur.fetchone()
+                                gift_cur.execute("SELECT channel_id FROM giftcode_channel WHERE alliance_id = ?", (alliance_id,))
+                                gift_channel = gift_cur.fetchone()
+                                rows.append((user_count, discord_server, settings, gift_status, gift_channel))
+                        return alliances, rows
+
+                    alliances, overview_rows = await db.run(db.ALLIANCE, _load_alliance_overview)
 
                     if alliances:
                         ALLIANCES_PER_PAGE = 5
                         alliance_info = []
 
-                        # One connection per DB for the whole loop, not per alliance.
-                        with db.connect(db.USERS) as users_db, \
-                             db.connect(db.ALLIANCE) as alliance_db, \
-                             db.connect(db.GIFTCODE) as gift_db:
-                            users_cur = users_db.cursor()
-                            alliance_cur = alliance_db.cursor()
-                            gift_cur = gift_db.cursor()
+                        for (_alliance_id, name), row in zip(alliances, overview_rows):
+                            user_count, discord_server, settings, gift_status, gift_channel = row
+                            info_parts = []
 
-                            for alliance_id, name in alliances:
-                                info_parts = []
+                            info_parts.append(f"{theme.userIcon} Members: {user_count}")
 
-                                users_cur.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,))
-                                user_count = users_cur.fetchone()[0]
-                                info_parts.append(f"{theme.userIcon} Members: {user_count}")
+                            if discord_server:
+                                server_id = discord_server[0]
+                                if server_id:
+                                    guild = self.bot.get_guild(server_id)
+                                    if guild:
+                                        info_parts.append(f"{theme.globeIcon} Server Name: {guild.name}")
+                                    else:
+                                        info_parts.append(f"{theme.globeIcon} Server ID: {server_id}")
 
-                                alliance_cur.execute("SELECT discord_server_id FROM alliance_list WHERE alliance_id = ?", (alliance_id,))
-                                discord_server = alliance_cur.fetchone()
-                                if discord_server:
-                                    server_id = discord_server[0]
-                                    if server_id:
-                                        guild = self.bot.get_guild(server_id)
-                                        if guild:
-                                            info_parts.append(f"{theme.globeIcon} Server Name: {guild.name}")
-                                        else:
-                                            info_parts.append(f"{theme.globeIcon} Server ID: {server_id}")
+                            if settings and settings[0]:
+                                info_parts.append(f"{theme.retryIcon} Sync Log: <#{settings[0]}>")
 
-                                alliance_cur.execute("SELECT channel_id FROM alliancesettings WHERE alliance_id = ?", (alliance_id,))
-                                settings = alliance_cur.fetchone()
-                                if settings and settings[0]:
-                                    info_parts.append(f"{theme.retryIcon} Sync Log: <#{settings[0]}>")
+                            gift_text = f"{theme.giftIcon} Gift System: Active" if gift_status and gift_status[0] == 1 else f"{theme.giftIcon} Gift System: Inactive"
+                            info_parts.append(gift_text)
 
-                                gift_cur.execute("SELECT status FROM giftcodecontrol WHERE alliance_id = ?", (alliance_id,))
-                                gift_status = gift_cur.fetchone()
-                                gift_text = f"{theme.giftIcon} Gift System: Active" if gift_status and gift_status[0] == 1 else f"{theme.giftIcon} Gift System: Inactive"
-                                info_parts.append(gift_text)
+                            if gift_channel and gift_channel[0]:
+                                info_parts.append(f"{theme.giftIcon} Gift Channel: <#{gift_channel[0]}>")
 
-                                gift_cur.execute("SELECT channel_id FROM giftcode_channel WHERE alliance_id = ?", (alliance_id,))
-                                gift_channel = gift_cur.fetchone()
-                                if gift_channel and gift_channel[0]:
-                                    info_parts.append(f"{theme.giftIcon} Gift Channel: <#{gift_channel[0]}>")
-
-                                alliance_info.append(
-                                    f"**{name}**\n" +
-                                    "\n".join(f"> {part}" for part in info_parts) +
-                                    f"\n{theme.lowerDivider}"
-                                )
+                            alliance_info.append(
+                                f"**{name}**\n" +
+                                "\n".join(f"> {part}" for part in info_parts) +
+                                f"\n{theme.lowerDivider}"
+                            )
 
                         pages = [alliance_info[i:i + ALLIANCES_PER_PAGE] 
                                 for i in range(0, len(alliance_info), ALLIANCES_PER_PAGE)]

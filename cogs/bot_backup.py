@@ -178,10 +178,8 @@ class BackupOperations(commands.Cog):
                 except ValueError:
                     pass
 
-            with db.connect(db.SETTINGS) as conn:
-                global_admins = conn.execute(
-                    "SELECT id FROM admin WHERE is_initial = 1"
-                ).fetchall()
+            global_admins = await db.fetchall(
+                db.SETTINGS, "SELECT id FROM admin WHERE is_initial = 1")
 
             can_backup, reason = self.can_create_backup(save_locally=True)
             if not can_backup:

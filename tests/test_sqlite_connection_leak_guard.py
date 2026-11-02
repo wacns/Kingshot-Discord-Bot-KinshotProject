@@ -230,3 +230,67 @@ def test_no_connection_used_after_its_block():
         "connection used after its with-block (it is already closed there):\n  "
         + "\n  ".join(sorted(offenders))
     )
+
+
+# Phase 3: listeners, task-loop bodies and scheduler paths that run constantly.
+# Their database work must go through `await db.run(...)` / `db.fetch*` /
+# `db.execute` so a 30 s lock wait cannot freeze the event loop. Nested `def`
+# helpers inside these functions run on the worker thread and are exempt;
+# nested `async def` menu callbacks and calls into other sync helpers are out
+# of scope (see the design doc). Uses of a cog's long-lived connection
+# (`self.cursor`, `self.conn`, ...) are not connects and stay for phase 4 -
+# the gift, notification, bear_track and player-sync entries hold only those today.
+BACKGROUND_FUNCTIONS: dict[str, set[str]] = {
+    "cogs/alliance.py": {"on_interaction"},
+    "cogs/alliance_logs.py": {"on_interaction"},
+    "cogs/alliance_id_channel.py": {"on_ready", "on_message", "check_channels_loop"},
+    "cogs/bear_track.py": {"on_message"},
+    "cogs/gift_operations.py": {"on_message"},
+    "cogs/bot_backup.py": {"automatic_backup_loop"},
+    "cogs/bot_startup.py": {"on_ready"},
+    "cogs/gift_redemption.py": {"handle_gift_validate_process", "periodic_validation_loop_body"},
+    "cogs/notification_system.py": {"check_notifications"},
+    "cogs/notification_schedule.py": {"daily_refresh_loop", "urgency_update_loop"},
+    "cogs/alliance_api_sync.py": {"schedule_loop"},
+}
+
+
+def _direct_connects(func: ast.AST, aliases: set[str]):
+    """Line numbers of connect calls in func's own body (nested defs/lambdas excluded)."""
+    stack = list(ast.iter_child_nodes(func))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        if _is_connect_call(node, aliases):
+            yield node.lineno
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _named_functions(tree: ast.AST, names: set[str]):
+    """Module-level functions and class methods with one of the given names."""
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef)):
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child.name in names:
+                    yield child
+
+
+def test_background_paths_do_not_block():
+    offenders = []
+    missing = []
+    for rel, names in BACKGROUND_FUNCTIONS.items():
+        tree = _parse(ROOT / rel)
+        aliases = _sqlite_aliases(tree)
+        found = set()
+        for func in _named_functions(tree, names):
+            found.add(func.name)
+            for ln in sorted(_direct_connects(func, aliases)):
+                offenders.append(f"{rel}:{ln} (in {func.name})")
+        missing += [f"{rel}:{n}" for n in sorted(names - found)]
+    assert not missing, f"BACKGROUND_FUNCTIONS entries not found: {missing}"
+    assert not offenders, (
+        "database connection opened directly on the event loop in a background "
+        "path - move it into `await db.run(db.<CONST>, _work, ...)` or db.fetch*/execute:\n  "
+        + "\n  ".join(offenders)
+    )

@@ -443,10 +443,8 @@ class AllianceIDChannel(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         try:
-            with db.connect(db.ID_CHANNEL) as dbc:
-                cursor = dbc.cursor()
-                cursor.execute("SELECT channel_id, alliance_id, guild_id FROM id_channels")
-                channels = cursor.fetchall()
+            channels = await db.fetchall(
+                db.ID_CHANNEL, "SELECT channel_id, alliance_id, guild_id FROM id_channels")
 
             invalid_channels, live_channels = [], []
             for channel_id, alliance_id, guild_id in channels:
@@ -459,14 +457,11 @@ class AllianceIDChannel(commands.Cog):
             await self.reconcile_info_messages()
 
             if invalid_channels:
-                with db.connect(db.ID_CHANNEL) as dbc:
-                    cursor = dbc.cursor()
-                    placeholders = ','.join('?' * len(invalid_channels))
-                    cursor.execute(f"""
+                placeholders = ','.join('?' * len(invalid_channels))
+                await db.execute(db.ID_CHANNEL, f"""
                         DELETE FROM id_channels
                         WHERE channel_id IN ({placeholders})
                     """, invalid_channels)
-                    dbc.commit()
 
             if not self.check_channels_loop.is_running():
                 self.check_channels_loop.start()
@@ -511,10 +506,9 @@ class AllianceIDChannel(commands.Cog):
             return
 
         try:
-            with db.connect(db.ID_CHANNEL) as dbc:
-                cursor = dbc.cursor()
-                cursor.execute("SELECT alliance_id FROM id_channels WHERE channel_id = ?", (message.channel.id,))
-                channel_info = cursor.fetchone()
+            channel_info = await db.fetchone(
+                db.ID_CHANNEL, "SELECT alliance_id FROM id_channels WHERE channel_id = ?",
+                (message.channel.id,))
 
             if not channel_info:
                 return
@@ -666,10 +660,8 @@ class AllianceIDChannel(commands.Cog):
     @tasks.loop(seconds=300)
     async def check_channels_loop(self):
         try:
-            with db.connect(db.ID_CHANNEL) as dbc:
-                cursor = dbc.cursor()
-                cursor.execute("SELECT channel_id, alliance_id, guild_id FROM id_channels")
-                channels = cursor.fetchall()
+            channels = await db.fetchall(
+                db.ID_CHANNEL, "SELECT channel_id, alliance_id, guild_id FROM id_channels")
 
             live = [(channel, alliance_id, guild_id) for channel_id, alliance_id, guild_id in channels
                     if (channel := self.bot.get_channel(channel_id))]

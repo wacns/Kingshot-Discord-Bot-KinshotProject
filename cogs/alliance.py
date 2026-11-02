@@ -400,10 +400,8 @@ class Alliance(commands.Cog):
                 return
 
             user_id = interaction.user.id
-            with db.connect(db.SETTINGS) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT id, is_initial FROM admin WHERE id = ?", (user_id,))
-                admin = cursor.fetchone()
+            admin = await db.fetchone(
+                db.SETTINGS, "SELECT id, is_initial FROM admin WHERE id = ?", (user_id,))
 
             if admin is None:
                 await interaction.response.send_message("You do not have permission to perform this action.", ephemeral=True)

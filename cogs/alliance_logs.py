@@ -206,13 +206,16 @@ class AllianceLogs(commands.Cog):
                     )
                     return
 
-                alliances_with_counts = []
-                for alliance_id, name in alliances:
-                    with db.connect(db.USERS) as users_db:
-                        cursor = users_db.cursor()
+                def _count_members(users_db, alliances):
+                    out = []
+                    cursor = users_db.cursor()
+                    for alliance_id, name in alliances:
                         cursor.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,))
                         member_count = cursor.fetchone()[0]
-                        alliances_with_counts.append((alliance_id, name, member_count))
+                        out.append((alliance_id, name, member_count))
+                    return out
+
+                alliances_with_counts = await db.run(db.USERS, _count_members, alliances)
 
                 alliance_embed = discord.Embed(
                     title=f"{theme.editListIcon} Set Log Channel",
@@ -355,14 +358,32 @@ class AllianceLogs(commands.Cog):
 
                 # Get log entries only for alliances admin can access
                 placeholders = ','.join('?' * len(admin_alliance_ids))
-                with db.connect(db.SETTINGS) as conn:
-                    cursor = conn.cursor()
+
+                def _load_removable(settings_db, admin_alliance_ids):
+                    cursor = settings_db.cursor()
                     cursor.execute(f"""
                         SELECT al.alliance_id, al.channel_id
                         FROM alliance_logs al
                         WHERE al.alliance_id IN ({placeholders})
                     """, admin_alliance_ids)
                     log_entries = cursor.fetchall()
+                    if not log_entries:
+                        return log_entries, []
+                    out = []
+                    with db.connect(db.ALLIANCE) as alliance_db, db.connect(db.USERS) as users_db:
+                        a_cursor = alliance_db.cursor()
+                        u_cursor = users_db.cursor()
+                        for alliance_id, _channel_id in log_entries:
+                            a_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id = ?", (alliance_id,))
+                            alliance_result = a_cursor.fetchone()
+                            alliance_name = alliance_result[0] if alliance_result else "Unknown Alliance"
+                            u_cursor.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,))
+                            member_count = u_cursor.fetchone()[0]
+                            out.append((alliance_id, alliance_name, member_count))
+                    return log_entries, out
+
+                log_entries, alliances_with_counts = await db.run(
+                    db.SETTINGS, _load_removable, admin_alliance_ids)
 
                 if not log_entries:
                     await interaction.response.send_message(
@@ -370,20 +391,6 @@ class AllianceLogs(commands.Cog):
                         ephemeral=True
                     )
                     return
-
-                alliances_with_counts = []
-                for alliance_id, _channel_id in log_entries:
-                    with db.connect(db.ALLIANCE) as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT name FROM alliance_list WHERE alliance_id = ?", (alliance_id,))
-                        alliance_result = cursor.fetchone()
-                    alliance_name = alliance_result[0] if alliance_result else "Unknown Alliance"
-
-                    with db.connect(db.USERS) as users_db:
-                        cursor = users_db.cursor()
-                        cursor.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,))
-                        member_count = cursor.fetchone()[0]
-                        alliances_with_counts.append((alliance_id, alliance_name, member_count))
 
                 if not alliances_with_counts:
                     await interaction.response.send_message(
@@ -565,8 +572,9 @@ class AllianceLogs(commands.Cog):
 
                 # Get log entries only for alliances admin can access
                 placeholders = ','.join('?' * len(admin_alliance_ids))
-                with db.connect(db.SETTINGS) as conn:
-                    cursor = conn.cursor()
+
+                def _load_log_channels(settings_db, admin_alliance_ids):
+                    cursor = settings_db.cursor()
                     cursor.execute(f"""
                         SELECT alliance_id, channel_id
                         FROM alliance_logs
@@ -574,6 +582,19 @@ class AllianceLogs(commands.Cog):
                         ORDER BY alliance_id
                     """, admin_alliance_ids)
                     log_entries = cursor.fetchall()
+                    if not log_entries:
+                        return log_entries, []
+                    names = []
+                    with db.connect(db.ALLIANCE) as alliance_db:
+                        a_cursor = alliance_db.cursor()
+                        for alliance_id, _channel_id in log_entries:
+                            a_cursor.execute("SELECT name FROM alliance_list WHERE alliance_id = ?", (alliance_id,))
+                            alliance_result = a_cursor.fetchone()
+                            names.append(alliance_result[0] if alliance_result else "Unknown Alliance")
+                    return log_entries, names
+
+                log_entries, alliance_names = await db.run(
+                    db.SETTINGS, _load_log_channels, admin_alliance_ids)
 
                 if not log_entries:
                     await interaction.response.send_message(
@@ -588,13 +609,7 @@ class AllianceLogs(commands.Cog):
                     color=theme.emColor1
                 )
 
-                for alliance_id, channel_id in log_entries:
-                    with db.connect(db.ALLIANCE) as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT name FROM alliance_list WHERE alliance_id = ?", (alliance_id,))
-                        alliance_result = cursor.fetchone()
-                    alliance_name = alliance_result[0] if alliance_result else "Unknown Alliance"
-
+                for (alliance_id, channel_id), alliance_name in zip(log_entries, alliance_names):
                     channel = interaction.guild.get_channel(channel_id)
                     channel_name = channel.name if channel else "Unknown Channel"
 
