@@ -219,7 +219,8 @@ def test_cancelled_processor_lets_its_status_write_land_first(queue, monkeypatch
         monkeypatch.setattr(db, "run", slow_run)
         task = asyncio.create_task(queue._processor_loop())
         deadline = time.monotonic() + 3
-        # The first worker is the read that picks the job; wait for the claim that follows it.
+        # `writing` is first set by the pick's read worker. `_current_process` is set only
+        # after the pick returns, right before the claim (mark_active) goes to its worker.
         while queue._current_process is None or not writing.is_set():
             assert time.monotonic() < deadline, "processor never claimed the job through db.run"
             await asyncio.sleep(0.005)
@@ -234,3 +235,34 @@ def test_cancelled_processor_lets_its_status_write_land_first(queue, monkeypatch
     # Once the cancelled processor has finished, its write has landed: nothing that runs
     # next (cog_unload closing, a reloaded queue's crash recovery) can be overtaken by it.
     assert rows == [(pid, "active", 0)]
+
+
+def test_stop_that_lands_during_requeue_is_kept(queue, monkeypatch):
+    pid = queue.enqueue("gift_redeem", pqm.GIFT_REDEEM, details={"giftcode": "ABC"})
+    queue.attach_runtime_context(pid, {"interaction": object()})
+    runs = []
+    replies = []
+
+    async def handler(process):
+        runs.append(process["id"])
+        raise pqm.PreemptedException()  # yields to higher-priority work
+
+    queue.register_handler("gift_redeem", handler)
+    real_execute = db.execute
+
+    async def requeue_while_admin_stops(path, sql, params=()):
+        if sql.strip().startswith("UPDATE process_queue SET status = 'queued'"):
+            # The admin presses Stop while the requeue is out on its worker.
+            replies.append(queue.cancel_process(pid))
+        return await real_execute(path, sql, params)
+
+    monkeypatch.setattr(db, "execute", requeue_while_admin_stops)
+    asyncio.run(_run_until(queue, lambda: len(runs) > 1, timeout=0.5))
+
+    # Same end state as a Stop on a queued job: the row is removed and its context dropped.
+    assert replies == ["stopping"]
+    assert runs == [pid]
+    assert _rows() == []
+    assert queue.get_runtime_context(pid) == {}
+    assert queue.running_info() is None
+    assert pid not in queue._cancel_requested

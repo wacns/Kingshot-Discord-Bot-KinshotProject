@@ -476,6 +476,14 @@ class ProcessQueue(commands.Cog):
                         preempted = True
                         await self.requeue(process['id'])
                         logger.info(f"ProcessQueue: Preempted {action} (id={process['id']}); re-queued for later")
+                        if process['id'] in self._cancel_requested:
+                            # An admin Stop landed while the requeue was on its worker. The job
+                            # is queued again now, so do what Stop does to a queued job.
+                            preempted = False  # finally drops its runtime context
+                            if await self._write_status(
+                                    "DELETE FROM process_queue WHERE id = ? AND status = 'queued'",
+                                    (process['id'],)):
+                                logger.info(f"ProcessQueue: removed queued process id={process['id']}")
                 except Exception as e:
                     logger.exception(f"ProcessQueue: Handler for {action} failed (id={process['id']}): {e}")
                     await self.mark_failed(process['id'])
