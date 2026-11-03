@@ -2069,12 +2069,15 @@ async def claim_giftcode_rewards_wos(cog, player_id, giftcode, *, skip_cache: bo
                     elif outcome["updated"] > 0:
                         cog.logger.info(f"GiftOps: Batch validated {outcome['updated']} gift codes")
 
-                    # If this code was just validated for the first time, send to API
-                    cog.logger.info(f"Code '{giftcode}' validated for the first time - sending to API")
-                    try:
-                        asyncio.create_task(cog.api.add_giftcode(giftcode))
-                    except Exception as api_err:
-                        cog.logger.exception(f"Error sending validated code '{giftcode}' to API: {api_err}")
+                    # Only the claim whose UPDATE flipped the row sends it to the API; a concurrent
+                    # claim that saw it pending but lost the race updated nothing.
+                    if outcome["updated"] > 0:
+                        # This code was just validated for the first time, send to API
+                        cog.logger.info(f"Code '{giftcode}' validated for the first time - sending to API")
+                        try:
+                            asyncio.create_task(cog.api.add_giftcode(giftcode))
+                        except Exception as api_err:
+                            cog.logger.exception(f"Error sending validated code '{giftcode}' to API: {api_err}")
 
                 cog.giftlog.info(f"DATABASE - Saved/Updated status for User {player_id}, Code '{giftcode}', Status {status}\n")
             except Exception as db_err:

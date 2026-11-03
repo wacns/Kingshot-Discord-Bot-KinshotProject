@@ -275,6 +275,33 @@ def test_claim_success_never_downgrades_and_skips_validated_code(workdir, monkey
     assert cog.api.added == [], "only a pending code is announced as newly validated"
 
 
+def test_two_successful_claims_for_one_pending_code_send_it_once(workdir, monkeypatch):
+    _gift("INSERT INTO gift_codes VALUES ('RACE', '2026-01-01', 'pending')")
+    cog, calls, _, _ = _mk_cog()
+
+    async def kid(cog_, fid):
+        return 259
+
+    async def redeem(cog_, fid, code, kid_, session):
+        return "SUCCESS"
+
+    monkeypatch.setattr(gr, "get_user_kid", kid)
+    monkeypatch.setattr(gr, "redeem_giftcode_once", redeem)
+    # Both claims "saw" the code pending (the SELECT and UPDATE are separate statements, so a
+    # concurrent claim can); only the UPDATE's rowcount says who flipped it.
+    monkeypatch.setattr(gr, "_PENDING_CHECK_SQL", "SELECT 1 FROM gift_codes WHERE giftcode = ?")
+
+    async def run():
+        await gr.claim_giftcode_rewards_wos(cog, 1, "RACE")
+        await gr.claim_giftcode_rewards_wos(cog, 2, "RACE")
+        await asyncio.sleep(0)
+
+    asyncio.run(run())
+
+    assert _gift("SELECT validation_status FROM gift_codes WHERE giftcode = 'RACE'") == [("validated",)]
+    assert cog.api.added == ["RACE"], "the code goes to the API once, by the claim that validated it"
+
+
 # --- periodic validation loop -----------------------------------------------
 
 def test_periodic_loop_cleans_validates_and_invalidates_off_loop(workdir, monkeypatch, no_sleep):

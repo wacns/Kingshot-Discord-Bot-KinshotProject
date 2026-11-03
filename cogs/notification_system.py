@@ -1106,6 +1106,8 @@ class NotificationSystem(commands.Cog):
                     if weekday_repeat:
                         weekdays = self._notification_weekdays(conn, id)
                         next_time = next_weekday_time(now, weekdays, hour, minute, tz) or next_time
+                    if next_time.isoformat() == next_notification:
+                        return  # cannot advance: rewriting the same value every tick is a no-op
                     conn.execute("""
                     UPDATE bear_notifications
                     SET next_notification = ?

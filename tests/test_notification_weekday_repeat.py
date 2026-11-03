@@ -82,6 +82,30 @@ def _frozen_datetime(fixed):
     return _Frozen
 
 
+def test_past_due_row_that_cannot_advance_is_not_rewritten(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    now = _local(BERLIN, 2026, 10, 7, 9, 0)
+    monkeypatch.setattr(ns, "datetime", _frozen_datetime(now))
+    cog = _mk_cog()
+    stuck = _local(BERLIN, 2026, 10, 5, 18, 30)
+    cog.cursor.execute("INSERT INTO bear_notifications VALUES (1, ?)", (stuck.isoformat(),))
+    cog.cursor.execute("CREATE TABLE writes (n INTEGER)")
+    cog.cursor.execute("CREATE TRIGGER count_writes AFTER UPDATE ON bear_notifications "
+                       "BEGIN INSERT INTO writes VALUES (1); END")
+    cog.conn.commit()
+    # Weekday repeat with no notification_days rows: next_weekday_time has nothing to offer.
+    row = (1, 10, 20, 18, 30, "Europe/Berlin", "Bear", 5, "none", 1, -1,
+           1, None, 1, None, stuck.isoformat(), "Bear Trap", None, None)
+
+    asyncio.run(cog.process_notification(row))
+    asyncio.run(cog.process_notification(row))
+
+    assert cog.cursor.execute("SELECT COUNT(*) FROM writes").fetchone()[0] == 0
+    stored = cog.cursor.execute("SELECT next_notification FROM bear_notifications WHERE id = 1").fetchone()[0]
+    assert stored == stuck.isoformat()
+    cog.conn.close()
+
+
 def test_catch_up_after_downtime_picks_today(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     now = _local(BERLIN, 2026, 10, 7, 9, 0)  # Wednesday morning

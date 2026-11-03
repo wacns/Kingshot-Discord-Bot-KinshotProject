@@ -266,3 +266,43 @@ def test_stop_that_lands_during_requeue_is_kept(queue, monkeypatch):
     assert queue.get_runtime_context(pid) == {}
     assert queue.running_info() is None
     assert pid not in queue._cancel_requested
+
+
+def test_enqueue_during_empty_pick_is_not_lost(queue, monkeypatch):
+    """A job enqueued while the empty pick is out on its worker must start promptly,
+    not after the 30 s idle wait (the wake event must be cleared before the pick)."""
+    q = queue
+    ran = []
+
+    async def handler(process):
+        ran.append(time.monotonic())
+
+    real_pick = pqm._pick_next
+
+    async def main():
+        loop = asyncio.get_running_loop()
+        q._loop = loop
+        q.register_handler("job", handler)
+        picked_empty = asyncio.Event()
+
+        def slow_pick(conn, sql, actions):
+            out = real_pick(conn, sql, actions)  # SELECT has run: queue empty
+            if out[0] is None and not picked_empty.is_set():
+                loop.call_soon_threadsafe(picked_empty.set)
+                time.sleep(0.05)  # result not delivered yet: the enqueue lands now
+            return out
+        monkeypatch.setattr(pqm, "_pick_next", slow_pick)
+
+        task = asyncio.create_task(q._processor_loop())
+        await picked_empty.wait()
+        t0 = time.monotonic()
+        q.enqueue("job", 100)
+        while not ran and time.monotonic() - t0 < 5:
+            await asyncio.sleep(0.01)
+        q._shutting_down = True
+        q._wake_event.set()
+        await asyncio.wait_for(task, 35)
+        return t0
+
+    t0 = asyncio.run(main())
+    assert ran and ran[0] - t0 < 2, f"enqueued job did not start promptly (lost wake-up): ran={ran}"

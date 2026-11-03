@@ -426,11 +426,13 @@ class ProcessQueue(commands.Cog):
         """Main processor loop. Picks highest-priority queued process and executes it."""
         while not self._shutting_down:
             try:
+                # Clear BEFORE looking for work: the pick is a worker hop, so a wake-up
+                # (enqueue, register_handler, shutdown) landing while it is in flight must survive.
+                self._wake_event.clear()
                 process = await self.get_next_queued()
 
                 if not process:
                     # No work — wait for wake signal
-                    self._wake_event.clear()
                     try:
                         await asyncio.wait_for(self._wake_event.wait(), timeout=30)
                     except asyncio.TimeoutError:
