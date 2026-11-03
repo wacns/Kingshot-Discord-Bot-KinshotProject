@@ -2685,6 +2685,9 @@ def render_bear_info_message() -> str:
 # BearTrack cog
 # ---------------------------------------------------------------------------
 
+_BEAR_IMAGE_EXTS = ('.png', '.jpg', '.jpeg')
+
+
 class BearTrack(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -2792,8 +2795,27 @@ class BearTrack(commands.Cog):
         player matches their older screenshot. When `include_history`, also adds
         every other past name at a score penalty. Every entry resolves to the
         member's *current* nickname for display/storage."""
-        current = {int(fid): (nick or "") for (fid, nick) in
-                   [(f, n) for (f, n) in self._fetch_current_members(alliance_id)]}
+        return self._build_match_roster(
+            self._fetch_current_members(alliance_id), as_of_date, include_history,
+            self._fetch_name_history)
+
+    async def get_match_roster_async(self, alliance_id, *, as_of_date=None, include_history=False):
+        """`get_match_roster` with both reads on fresh connections off the loop."""
+        rows = await db.fetchall(db.USERS, self._CURRENT_MEMBERS_SQL, (str(alliance_id),))
+        history = {}
+        if rows and (as_of_date or include_history):
+            fids = [int(fid) for (fid, _nick) in rows]
+            try:
+                sql, params = self._name_history_query(fids)
+                history = self._group_name_history(await db.fetchall(db.CHANGES, sql, params))
+            except Exception as e:
+                logger.warning(f"Bear: name-history lookup failed: {e}")
+                history = {}
+        return self._build_match_roster(rows, as_of_date, include_history, lambda _fids: history)
+
+    @staticmethod
+    def _build_match_roster(member_rows, as_of_date, include_history, history_of):
+        current = {int(fid): (nick or "") for (fid, nick) in member_rows}
         if not current:
             return []
         # entries: (fid, match_name, penalty, display=current_nick)
@@ -2816,7 +2838,7 @@ class BearTrack(commands.Cog):
         if not (as_of_date or include_history):
             return entries
 
-        history = self._fetch_name_history(list(current.keys()))  # {fid: [(old, new, date)]}
+        history = history_of(list(current.keys()))  # {fid: [(old, new, date)]}
         for fid in current:
             changes = history.get(fid) or []
             if as_of_date and changes:
@@ -2827,37 +2849,50 @@ class BearTrack(commands.Cog):
                     _add(fid, new_n, MATCH_HISTORY_PENALTY)
         return entries
 
+    _CURRENT_MEMBERS_SQL = "SELECT fid, nickname FROM users WHERE alliance = ?"
+
     def _fetch_current_members(self, alliance_id):
-        self.users_cursor.execute(
-            "SELECT fid, nickname FROM users WHERE alliance = ?", (str(alliance_id),))
+        self.users_cursor.execute(self._CURRENT_MEMBERS_SQL, (str(alliance_id),))
         return self.users_cursor.fetchall()
+
+    @staticmethod
+    def _name_history_query(fids):
+        placeholders = ",".join("?" * len(fids))
+        return (
+            f"SELECT fid, old_nickname, new_nickname, change_date "
+            f"FROM nickname_changes WHERE fid IN ({placeholders}) "
+            f"ORDER BY change_date ASC",
+            [int(f) for f in fids])
+
+    @staticmethod
+    def _group_name_history(rows) -> dict:
+        out: dict = {}
+        for fid, old_n, new_n, dt in rows:
+            out.setdefault(int(fid), []).append((old_n or "", new_n or "", dt or ""))
+        return out
 
     def _fetch_name_history(self, fids) -> dict:
         """{fid: [(old_nickname, new_nickname, change_date), ...] sorted asc}."""
         if not fids:
             return {}
-        out: dict = {}
-        placeholders = ",".join("?" * len(fids))
         try:
-            self.changes_cursor.execute(
-                f"SELECT fid, old_nickname, new_nickname, change_date "
-                f"FROM nickname_changes WHERE fid IN ({placeholders}) "
-                f"ORDER BY change_date ASC",
-                [int(f) for f in fids])
-            for fid, old_n, new_n, dt in self.changes_cursor.fetchall():
-                out.setdefault(int(fid), []).append((old_n or "", new_n or "", dt or ""))
+            sql, params = self._name_history_query(fids)
+            self.changes_cursor.execute(sql, params)
+            return self._group_name_history(self.changes_cursor.fetchall())
         except Exception as e:
             logger.warning(f"Bear: name-history lookup failed: {e}")
-        return out
+            return {}
 
-    def get_ocr_language_settings(self, alliance_id):
-        """Return (primary_lang, [fallback_langs]) for the alliance."""
-        self.alliance_cursor.execute(
+    def get_ocr_language_settings(self, alliance_id, *, conn=None):
+        """Return (primary_lang, [fallback_langs]) for the alliance.
+        `conn`: read on this (worker-thread) connection instead of the cog's."""
+        cur = self.alliance_cursor if conn is None else conn.cursor()
+        cur.execute(
             "SELECT bear_ocr_lang, bear_ocr_fallback_langs FROM alliancesettings "
             "WHERE alliance_id = ?",
             (alliance_id,),
         )
-        row = self.alliance_cursor.fetchone()
+        row = cur.fetchone()
         if not row:
             return DEFAULT_OCR_LANG, []
         primary = (row[0] or DEFAULT_OCR_LANG).strip()
@@ -2910,9 +2945,11 @@ class BearTrack(commands.Cog):
     # Settings helpers (column-based, not JSON)
     # -------------------------------------------------------------------
 
-    def get_bear_settings(self, alliance_id: int) -> dict:
-        """Return bear settings dict from individual columns."""
-        self.alliance_cursor.execute(
+    def get_bear_settings(self, alliance_id: int, *, conn=None) -> dict:
+        """Return bear settings dict from individual columns.
+        `conn`: read on this (worker-thread) connection instead of the cog's."""
+        cur = self.alliance_cursor if conn is None else conn.cursor()
+        cur.execute(
             "SELECT bear_score_channel, bear_keywords, bear_damage_range, "
             "bear_admin_only_view, bear_admin_only_add, "
             "bear_session_timeout_min, bear_auto_delete_screenshots, "
@@ -2921,7 +2958,7 @@ class BearTrack(commands.Cog):
             "FROM alliancesettings WHERE alliance_id = ?",
             (alliance_id,)
         )
-        row = self.alliance_cursor.fetchone()
+        row = cur.fetchone()
         if not row:
             return {
                 "channel_id": None,
@@ -3215,12 +3252,17 @@ class BearTrack(commands.Cog):
         if not message.content.strip() and not message.attachments:
             return
 
-        # Check if channel is a bear_score_channel and get keywords + alliance_id
-        self.alliance_cursor.execute(
+        # Nothing below acts on a message without a screenshot; check that before any DB read.
+        if not any(a.filename.lower().endswith(ext) for a in message.attachments
+                   for ext in _BEAR_IMAGE_EXTS):
+            return
+
+        # Check if channel is a bear_score_channel and get keywords + alliance_id.
+        # Per-message pure read on a WAL file: stays on the loop's connection (ruling R5).
+        row = self.alliance_conn.execute(
             "SELECT alliance_id, bear_keywords FROM alliancesettings WHERE bear_score_channel = ?",
             (message.channel.id,)
-        )
-        row = self.alliance_cursor.fetchone()
+        ).fetchone()
         if not row:
             return
         alliance_id, keywords_raw = row
@@ -3236,7 +3278,7 @@ class BearTrack(commands.Cog):
         """Route a screenshot upload into the per-(channel, user) session."""
         image_attachments = [
             a for a in message.attachments
-            if any(a.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg'])
+            if any(a.filename.lower().endswith(ext) for ext in _BEAR_IMAGE_EXTS)
         ]
         if not image_attachments:
             return
@@ -3245,35 +3287,45 @@ class BearTrack(commands.Cog):
         session = _active_sessions.get(key)
 
         if session is None:
-            if alliance_id is None:
-                self.alliance_cursor.execute(
-                    "SELECT alliance_id FROM alliancesettings WHERE bear_score_channel = ?",
-                    (message.channel.id,),
-                )
-                row = self.alliance_cursor.fetchone()
-                if not row:
-                    return
-                alliance_id = int(row[0])
+            channel_id = message.channel.id
 
-            self.alliance_cursor.execute(
-                "SELECT name FROM alliance_list WHERE alliance_id = ?", (alliance_id,)
-            )
-            anrow = self.alliance_cursor.fetchone()
-            alliance_name = anrow[0] if anrow else f"Alliance {alliance_id}"
+            def _read_alliance_settings(conn, aid):
+                # Worker thread, own connection: reads only, returns plain data.
+                if aid is None:
+                    row = conn.execute(
+                        "SELECT alliance_id FROM alliancesettings WHERE bear_score_channel = ?",
+                        (channel_id,),
+                    ).fetchone()
+                    if not row:
+                        return None
+                    aid = int(row[0])
+                anrow = conn.execute(
+                    "SELECT name FROM alliance_list WHERE alliance_id = ?", (aid,)
+                ).fetchone()
+                return (
+                    aid,
+                    anrow[0] if anrow else f"Alliance {aid}",
+                    bool(self.get_bear_settings(aid, conn=conn).get("match_all_history")),
+                    self.get_ocr_language_settings(aid, conn=conn),
+                    self.get_session_settings(aid, conn=conn),
+                )
+
+            found = await db.run(db.ALLIANCE, _read_alliance_settings, alliance_id)
+            if found is None:
+                return
+            alliance_id, alliance_name, _hist, (primary_lang, _stored_fb), (
+                timeout_min, auto_delete) = found
             # Fresh upload: the event date isn't known until review, so resolve
-            # names as of today (≈ current). The opt-in history flag still applies.
+            # names as of today (~ current). The opt-in history flag still applies.
             _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            _hist = bool(self.get_bear_settings(alliance_id).get("match_all_history"))
-            roster = self.get_match_roster(
+            roster = await self.get_match_roster_async(
                 alliance_id, as_of_date=_today, include_history=_hist)
-            primary_lang, _stored_fb = self.get_ocr_language_settings(alliance_id)
-            # Auto-manage on → fallbacks derived from roster names (persist-on-change);
-            # off → the stored manual fallbacks. auto_managed_fallbacks handles both.
+            # Auto-manage on -> fallbacks derived from roster names (persist-on-change);
+            # off -> the stored manual fallbacks. auto_managed_fallbacks handles both.
             roster_names = [e[-1] for e in roster if len(e) >= 2]
-            fallback_langs = auto_managed_fallbacks(
-                alliance_id, roster_names, primary=primary_lang)
+            fallback_langs = await asyncio.to_thread(
+                auto_managed_fallbacks, alliance_id, roster_names, primary=primary_lang)
             fallback_langs = sorted(fallback_langs, key=lambda l: l in _LATIN_ONLY_LANGS)
-            timeout_min, auto_delete = self.get_session_settings(alliance_id)
 
             session = BearSession(
                 cog=self,
@@ -3300,14 +3352,16 @@ class BearTrack(commands.Cog):
 
         await session.add_message(message, image_attachments)
 
-    def get_session_settings(self, alliance_id: int) -> tuple[int, bool]:
-        """Return (timeout_min, auto_delete_screenshots) for the alliance."""
-        self.alliance_cursor.execute(
+    def get_session_settings(self, alliance_id: int, *, conn=None) -> tuple[int, bool]:
+        """Return (timeout_min, auto_delete_screenshots) for the alliance.
+        `conn`: read on this (worker-thread) connection instead of the cog's."""
+        cur = self.alliance_cursor if conn is None else conn.cursor()
+        cur.execute(
             "SELECT bear_session_timeout_min, bear_auto_delete_screenshots "
             "FROM alliancesettings WHERE alliance_id = ?",
             (alliance_id,),
         )
-        row = self.alliance_cursor.fetchone()
+        row = cur.fetchone()
         if not row:
             return 15, True
         timeout = row[0] if row[0] is not None else 15

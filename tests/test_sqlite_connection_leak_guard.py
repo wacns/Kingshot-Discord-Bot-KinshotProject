@@ -297,12 +297,6 @@ LONG_LIVED_TARGETS: dict[str, set[str]] = {
     "cogs/bear_track.py": {"on_message", "process_bear_hunt_data"},
 }
 
-# Files not converted yet; each conversion task removes its files. Task 6
-# deletes this set and its stale test once empty.
-LONG_LIVED_PENDING: set[str] = {
-    "cogs/bear_track.py",
-}
-
 LONG_LIVED_OPS = {
     "execute", "executemany", "executescript", "commit", "fetchone", "fetchall", "cursor",
     "rollback",
@@ -336,7 +330,7 @@ def _is_long_lived_use(node: ast.AST) -> bool:
 # lock (it cannot cause the 30 s event-loop stall these guards exist for), while
 # moving a read that runs every 0.1 s into db.run would be a constant worker hop
 # (executor load on Pi hosts). Only this exact shape is exempt:
-#     self.conn.execute(<SQL containing marker>, ...).fetchall() / .fetchone()
+#     self.conn|self.<name>_conn.execute(<SQL containing marker>, ...).fetchall() / .fetchone()
 # - a fresh cursor, statement completed and reset in the same expression, no await
 # in between. Any other long-lived use in these functions is still an offender, and
 # each entry must match exactly one site (stale or ambiguous entries fail).
@@ -346,13 +340,17 @@ ALLOWED_LONG_LIVED_READS: set[tuple[str, str, str]] = {
      "WHERE is_enabled = 1 AND next_notification IS NOT NULL"),
     ("cogs/notification_system.py", "process_notification",
      "SELECT COUNT(*) FROM notification_history"),
+    # alliance.sqlite is WAL; one read per screenshot message in any guild, after the
+    # no-attachment early return. A worker hop per message would only add executor load.
+    ("cogs/bear_track.py", "on_message",
+     "FROM alliancesettings WHERE bear_score_channel = ?"),
 }
 
 
 def _allowed_read_key(node: ast.AST, rel: str, func_name: str):
     """The ALLOWED_LONG_LIVED_READS entry `node` is, or None.
 
-    `node` must be `self.conn.execute(<str const>, ...).fetchall()|.fetchone()`."""
+    `node` must be `self.conn|self.<name>_conn.execute(<str const>, ...).fetchall()|.fetchone()`."""
     if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
             and node.func.attr in {"fetchall", "fetchone"} and not node.args):
         return None
@@ -360,7 +358,7 @@ def _allowed_read_key(node: ast.AST, rel: str, func_name: str):
     if not (isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute)
             and inner.func.attr == "execute"
             and isinstance(inner.func.value, ast.Attribute)
-            and inner.func.value.attr == "conn"
+            and (inner.func.value.attr == "conn" or inner.func.value.attr.endswith("_conn"))
             and isinstance(inner.func.value.value, ast.Name)
             and inner.func.value.value.id == "self"
             and inner.args and isinstance(inner.args[0], ast.Constant)
@@ -411,8 +409,7 @@ def test_targets_do_not_use_long_lived_connections():
     for rel in LONG_LIVED_TARGETS:
         file_offenders, found = _long_lived_scan(rel)
         missing += [f"{rel}:{n}" for n in sorted(LONG_LIVED_TARGETS[rel] - found)]
-        if rel not in LONG_LIVED_PENDING:
-            offenders += file_offenders
+        offenders += file_offenders
     assert not missing, f"LONG_LIVED_TARGETS entries not found: {missing}"
     assert not offenders, (
         "long-lived connection/cursor used directly on the event loop in a "
@@ -446,11 +443,3 @@ class C:
     assert lines == [5, 6, 7, 8]
     assert len(hits) == 1
 
-
-def test_long_lived_pending_only_shrinks():
-    unknown = sorted(LONG_LIVED_PENDING - set(LONG_LIVED_TARGETS))
-    assert not unknown, f"LONG_LIVED_PENDING names files not in LONG_LIVED_TARGETS: {unknown}"
-    stale = [rel for rel in sorted(LONG_LIVED_PENDING) if not _long_lived_scan(rel)[0]]
-    assert not stale, (
-        f"{stale} are converted: remove them from LONG_LIVED_PENDING so the guard enforces them"
-    )
