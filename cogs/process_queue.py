@@ -36,6 +36,16 @@ _ENQUEUE_SQL = """
             VALUES (?, 'queued', ?, ?, ?, ?)
         """
 
+_QUEUED_SQL = "SELECT id, action FROM process_queue WHERE status = 'queued'"
+
+
+def _pick_next(conn, next_sql, actions):
+    """Worker: the next runnable row, or (when there is none) every queued (id, action)."""
+    row = conn.execute(next_sql, actions).fetchone()
+    if row:
+        return row, None
+    return None, conn.execute(_QUEUED_SQL).fetchall()
+
 
 class PreemptedException(Exception):
     """Raised by a handler to signal it was preempted by higher-priority work.
@@ -176,18 +186,21 @@ class ProcessQueue(commands.Cog):
         except RuntimeError:
             pass  # loop already closed: nothing left to wake
 
-    def get_next_queued(self) -> Optional[Dict]:
-        """Get the highest-priority queued process that has a handler, or None."""
+    async def get_next_queued(self) -> Optional[Dict]:
+        """Get the highest-priority queued process that has a handler, or None.
+
+        When nothing runnable is queued, the same worker hop also lists the queued jobs so
+        `_warn_unhandled` can flag ones that have no handler."""
         action_filter, actions = self._handled_actions_filter()
-        self.cursor.execute(f"""
+        row, queued = await db.run(db.SETTINGS, _pick_next, f"""
             SELECT id, action, status, priority, alliance_id, details, created_at
             FROM process_queue
             WHERE status = 'queued'{action_filter}
             ORDER BY priority ASC, id ASC
             LIMIT 1
         """, actions)
-        row = self.cursor.fetchone()
         if not row:
+            self._warn_unhandled(queued)
             return None
         return self._row_to_dict(row)
 
@@ -202,41 +215,53 @@ class ProcessQueue(commands.Cog):
             'created_at': row[6],
         }
 
-    def mark_active(self, process_id: int):
-        self.cursor.execute(
+    async def _write_status(self, sql: str, params: tuple) -> int:
+        """Run one status UPDATE on a worker and return its rowcount.
+
+        A cancelled await does not stop the worker, which still commits. So when this task
+        is cancelled mid-write, wait for the write to land before letting the cancellation
+        through: nothing that runs after it (cog_unload closing, a reloaded queue's
+        recover_interrupted, the next status write) can then be overtaken by it."""
+        write = asyncio.ensure_future(db.execute(db.SETTINGS, sql, params))
+        try:
+            return await asyncio.shield(write)
+        except asyncio.CancelledError:
+            await asyncio.wait({write})
+            if not write.cancelled():
+                write.exception()  # retrieved: the cancellation wins, no "never retrieved" log
+            raise
+
+    async def mark_active(self, process_id: int) -> bool:
+        """False when the row is gone (removed while the processor was picking it)."""
+        return await self._write_status(
             "UPDATE process_queue SET status = 'active' WHERE id = ?",
             (process_id,)
-        )
-        self.conn.commit()
+        ) > 0
 
-    def mark_completed(self, process_id: int):
-        self.cursor.execute(
+    async def mark_completed(self, process_id: int):
+        await self._write_status(
             "UPDATE process_queue SET status = 'completed', completed_at = ? WHERE id = ?",
             (datetime.now().isoformat(), process_id)
         )
-        self.conn.commit()
 
-    def mark_failed(self, process_id: int):
-        self.cursor.execute(
+    async def mark_failed(self, process_id: int):
+        await self._write_status(
             "UPDATE process_queue SET status = 'failed', completed_at = ? WHERE id = ?",
             (datetime.now().isoformat(), process_id)
         )
-        self.conn.commit()
 
-    def mark_cancelled(self, process_id: int):
-        self.cursor.execute(
+    async def mark_cancelled(self, process_id: int):
+        await self._write_status(
             "UPDATE process_queue SET status = 'cancelled', completed_at = ? WHERE id = ?",
             (datetime.now().isoformat(), process_id)
         )
-        self.conn.commit()
 
-    def requeue(self, process_id: int):
+    async def requeue(self, process_id: int):
         """Set a process back to 'queued' (used when preempted by higher priority work)."""
-        self.cursor.execute(
+        await self._write_status(
             "UPDATE process_queue SET status = 'queued' WHERE id = ?",
             (process_id,)
         )
-        self.conn.commit()
 
     def update_details(self, process_id: int, details: Dict):
         # Overwrites the full details blob — callers checkpointing before a
@@ -401,10 +426,9 @@ class ProcessQueue(commands.Cog):
         """Main processor loop. Picks highest-priority queued process and executes it."""
         while not self._shutting_down:
             try:
-                process = self.get_next_queued()
+                process = await self.get_next_queued()
 
                 if not process:
-                    self._warn_unhandled()
                     # No work — wait for wake signal
                     self._wake_event.clear()
                     try:
@@ -421,7 +445,13 @@ class ProcessQueue(commands.Cog):
 
                 self._current_process = process
                 self._current_started = datetime.now()
-                self.mark_active(process['id'])
+                if not await self.mark_active(process['id']):
+                    # Removed (Stop/clear) while the pick was out on its worker: don't run it.
+                    logger.info(f"ProcessQueue: {action} (id={process['id']}) was removed before it started")
+                    self._cancel_requested.discard(process['id'])
+                    self._current_process = None
+                    self._current_started = None
+                    continue
 
                 preempted = False
                 try:
@@ -430,25 +460,25 @@ class ProcessQueue(commands.Cog):
                         await handler(process)
                     else:
                         await asyncio.wait_for(handler(process), timeout=HANDLER_TIMEOUT_SECONDS)
-                    self.mark_completed(process['id'])
+                    await self.mark_completed(process['id'])
                     logger.info(f"ProcessQueue: Completed {action} (id={process['id']})")
                 except asyncio.TimeoutError:
                     msg = (f"ProcessQueue: {action} (id={process['id']}, alliance={process['alliance_id']}) "
                            f"exceeded {HANDLER_TIMEOUT_SECONDS}s and was abandoned so the queue can continue")
                     logger.error(msg)
                     print(msg)
-                    self.mark_failed(process['id'])
+                    await self.mark_failed(process['id'])
                 except PreemptedException:
                     if process['id'] in self._cancel_requested:
-                        self.mark_cancelled(process['id'])
+                        await self.mark_cancelled(process['id'])
                         logger.info(f"ProcessQueue: Stopped {action} (id={process['id']}) on admin request")
                     else:
                         preempted = True
-                        self.requeue(process['id'])
+                        await self.requeue(process['id'])
                         logger.info(f"ProcessQueue: Preempted {action} (id={process['id']}); re-queued for later")
                 except Exception as e:
                     logger.exception(f"ProcessQueue: Handler for {action} failed (id={process['id']}): {e}")
-                    self.mark_failed(process['id'])
+                    await self.mark_failed(process['id'])
                 finally:
                     if not preempted:
                         self.clear_runtime_context(process['id'])
@@ -463,9 +493,9 @@ class ProcessQueue(commands.Cog):
                 logger.exception(f"ProcessQueue: Processor loop error: {e}")
                 await asyncio.sleep(1)
 
-    def _warn_unhandled(self):
-        self.cursor.execute("SELECT id, action FROM process_queue WHERE status = 'queued'")
-        for process_id, action in self.cursor.fetchall():
+    def _warn_unhandled(self, queued):
+        """Warn once per queued job whose action has no handler. `queued` is (id, action) rows."""
+        for process_id, action in queued:
             if action not in self._handlers and process_id not in self._unhandled_warned:
                 self._unhandled_warned.add(process_id)
                 logger.warning(f"ProcessQueue: No handler registered for action '{action}' "

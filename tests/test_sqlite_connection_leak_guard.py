@@ -293,7 +293,13 @@ LONG_LIVED_TARGETS: dict[str, set[str]] = {
 
 # Files not converted yet; each conversion task removes its files. Task 6
 # deletes this set and its stale test once empty.
-LONG_LIVED_PENDING: set[str] = set(LONG_LIVED_TARGETS)
+LONG_LIVED_PENDING: set[str] = {
+    "cogs/gift_redemption.py",
+    "cogs/gift_operations.py",
+    "cogs/notification_system.py",
+    "cogs/notification_schedule.py",
+    "cogs/bear_track.py",
+}
 
 LONG_LIVED_OPS = {
     "execute", "executemany", "executescript", "commit", "fetchone", "fetchall", "cursor",
