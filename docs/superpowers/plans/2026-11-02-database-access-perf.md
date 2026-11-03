@@ -73,3 +73,35 @@ The repeat spread is large (up to 2.4 times on connect_wal), so compare minimums
 - Self-compare: `<python> docs/superpowers/plans/perf/perf_gate.py --runs 7 --compare docs/superpowers/plans/perf/baseline.json` (exit 0)
 - Micro-benchmark: `<python> docs/superpowers/plans/perf/db_microbench.py` (default `--n 1000 --repeats 3`)
 - Lint: `<python> -m ruff check docs/superpowers/plans/perf/` (all checks passed)
+
+## Stage 2 (background database work off the event loop)
+
+Measured on commit `5be53e4` (branch `db-offloop`, Tasks 1 to 6 applied). Stage 2 baseline: `docs/superpowers/plans/perf/baseline-stage2.json` (7 runs per file, same command as stage 1). The stage-1 `baseline.json` is untouched.
+
+| file | runs (7) | min | passed |
+|---|---|---|---|
+| tests/test_gift_redeem_accounting.py | 0.28, 0.38, 0.23, 0.25, 0.29, 0.25, 0.34 | **0.23** | 9 |
+| tests/test_gift_redeem_resume.py | 0.35, 0.30, 0.25, 0.26, 0.27, 0.25, 0.22 | **0.22** | 3 |
+| tests/test_process_queue_reload.py | 0.19, 0.18, 0.18, 0.18, 0.18, 0.18, 0.19 | **0.18** | 2 |
+| tests/test_bear_persist_no_deadlock.py | 2.26, 1.95, 1.98, 1.83, 1.90, 2.45, 2.10 | **1.83** | 1 |
+| tests/test_minister_booking.py | 2.54, 2.62, 2.50, 2.66, 2.67, 2.46, 2.78 | **2.46** | 11 |
+| tests/test_notification_fire_path.py | 0.50, 0.45, 0.54, 0.64, 0.47, 0.46, 0.49 | **0.45** | 11 |
+
+Pass counts equal the stage-1 baseline for every file.
+
+### Gate against the stage-1 baseline
+
+`perf_gate.py --compare baseline.json` on `5be53e4`, run during a slow host phase, failed all six files (for example bear_persist 9.90 s against 1.29 s, gift_redeem_accounting 1.44 s against 0.17 s). That is host-wide drift, not this stage: an interleaved same-time A/B of the stage-1 head (`82645aa`, A) against `5be53e4` (B), 2 rounds of 4 runs, minimum seconds, shows the stage-1 code slowed by the same factor in that phase.
+
+| file | A round 1 | B round 1 | A round 2 (slow phase) | B round 2 |
+|---|---|---|---|---|
+| tests/test_gift_redeem_accounting.py | 0.24 | 0.22 | 1.55 | 0.25 |
+| tests/test_gift_redeem_resume.py | 0.22 | 0.19 | 1.34 | 0.21 |
+| tests/test_process_queue_reload.py | 0.18 | 0.18 | 0.74 | 0.17 |
+| tests/test_bear_persist_no_deadlock.py | 1.87 | 1.63 | 9.64 | 1.79 |
+| tests/test_minister_booking.py | 2.36 | 2.12 | 2.17 | 2.19 |
+| tests/test_notification_fire_path.py | 0.17 | 2.02 | 0.14 | 0.45 |
+
+Every file except `test_notification_fire_path.py` is within max(10%, +0.15 s) of the stage-1 head in the same phase. `test_notification_fire_path.py` is slower (0.14 to 0.17 s before, 0.45 s on a quiet host, 2.02 s once under load). This is the accepted ruling R6: its fixture moved from `:memory:` to a file database and each send now pays a worker hop. It is fixture and worker latency, not event-loop time.
+
+Command: `<python> docs/superpowers/plans/perf/perf_gate.py --out docs/superpowers/plans/perf/baseline-stage2.json`.
