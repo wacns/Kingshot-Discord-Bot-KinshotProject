@@ -177,7 +177,7 @@ Goal 3 is now met for the listed paths: the notification scheduler
 (`notification_system`, `notification_schedule`), the gift-code validation and periodic
 loops in `gift_redemption`, the `gift_operations` and `bear_track` `on_message`
 listeners, and `process_bear_hunt_data` do their database work through `db.run`
-(worker thread, short-lived connection). `ProcessQueue` bookkeeping moved too. Test-mode
+(worker thread, short-lived connection). `ProcessQueue` bookkeeping moved too, except the `enqueue` loop path. Test-mode
 guards (`LONG_LIVED_TARGETS`, and a check against uncommitted long-lived writes reaching
 `db.run`) keep these paths from sliding back.
 

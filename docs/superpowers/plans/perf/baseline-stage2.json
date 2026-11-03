@@ -1,5 +1,5 @@
 {
-  "python": "C:\\Users\\ABU-LAYLA\\AppData\\Local\\Temp\\claude\\C--Users-ABU-LAYLA-PycharmProjects-Kingshot-Discord-Bot-KinshotProject\\bb0e5a14-7444-461d-b394-7b5f96c5175b\\scratchpad\\venv\\Scripts\\python.exe",
+  "python": "<python>",
   "runs_per_file": 7,
   "command": "<python> -m pytest <file> -q -p no:cacheprovider",
   "files": {

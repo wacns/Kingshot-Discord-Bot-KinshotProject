@@ -89,6 +89,8 @@ Measured on commit `5be53e4` (branch `db-offloop`, Tasks 1 to 6 applied). Stage 
 
 Pass counts equal the stage-1 baseline for every file.
 
+**Caveat: this baseline was recorded while the host was busy.** Its minimums are about 35% above quiet-host figures (stage-1 baseline minimums 0.17, 0.16, 0.14, 1.29, 1.79, 0.14 s, in the table order above; the quiet-host stage-2 A/B figures were 0.22, 0.19, 0.18, 1.63, 2.12 s and 0.45 s for the notification file). A `--compare` against `baseline-stage2.json` is therefore lenient. Re-record it on an idle machine before relying on it.
+
 ### Gate against the stage-1 baseline
 
 `perf_gate.py --compare baseline.json` on `5be53e4`, run during a slow host phase, failed all six files (for example bear_persist 9.90 s against 1.29 s, gift_redeem_accounting 1.44 s against 0.17 s). That is host-wide drift, not this stage: an interleaved same-time A/B of the stage-1 head (`82645aa`, A) against `5be53e4` (B), 2 rounds of 4 runs, minimum seconds, shows the stage-1 code slowed by the same factor in that phase.
@@ -104,4 +106,4 @@ Pass counts equal the stage-1 baseline for every file.
 
 Every file except `test_notification_fire_path.py` is within max(10%, +0.15 s) of the stage-1 head in the same phase. `test_notification_fire_path.py` is slower (0.14 to 0.17 s before, 0.45 s on a quiet host, 2.02 s once under load). This is the accepted ruling R6: its fixture moved from `:memory:` to a file database and each send now pays a worker hop. It is fixture and worker latency, not event-loop time.
 
-Command: `<python> docs/superpowers/plans/perf/perf_gate.py --out docs/superpowers/plans/perf/baseline-stage2.json`.
+Command: `<python> docs/superpowers/plans/perf/perf_gate.py --runs 7 --out docs/superpowers/plans/perf/baseline-stage2.json` (7 is also the default).
