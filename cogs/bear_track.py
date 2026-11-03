@@ -2305,6 +2305,10 @@ class BearSession:
 
 
 _active_sessions: dict = {}
+# (channel, user) -> future of a session being started (settings/roster reads are awaited).
+# Registered before the first await so a second message for the same key waits for it
+# instead of starting its own or being dropped by the keyword gate.
+_session_starting: dict = {}
 
 
 async def _ack_component(interaction: discord.Interaction) -> bool:
@@ -3268,7 +3272,8 @@ class BearTrack(commands.Cog):
         alliance_id, keywords_raw = row
 
         keywords = [kw.strip() for kw in keywords_raw.split(",") if kw.strip()] if keywords_raw else []
-        has_session = (message.channel.id, message.author.id) in _active_sessions
+        _key = (message.channel.id, message.author.id)
+        has_session = _key in _active_sessions or _key in _session_starting
         if keywords and not has_session and not any(kw.lower() in message.content.lower() for kw in keywords):
             return
 
@@ -3285,70 +3290,88 @@ class BearTrack(commands.Cog):
 
         key = (message.channel.id, message.author.id)
         session = _active_sessions.get(key)
+        if session is None and key in _session_starting:
+            # Another message is starting this session: join it (or, if it failed, start our own).
+            session = await asyncio.shield(_session_starting[key])
+            if session is None:
+                return await self.process_bear_hunt_data(message, alliance_id=alliance_id)
 
         if session is None:
-            channel_id = message.channel.id
-
-            def _read_alliance_settings(conn, aid):
-                # Worker thread, own connection: reads only, returns plain data.
-                if aid is None:
-                    row = conn.execute(
-                        "SELECT alliance_id FROM alliancesettings WHERE bear_score_channel = ?",
-                        (channel_id,),
-                    ).fetchone()
-                    if not row:
-                        return None
-                    aid = int(row[0])
-                anrow = conn.execute(
-                    "SELECT name FROM alliance_list WHERE alliance_id = ?", (aid,)
-                ).fetchone()
-                return (
-                    aid,
-                    anrow[0] if anrow else f"Alliance {aid}",
-                    bool(self.get_bear_settings(aid, conn=conn).get("match_all_history")),
-                    self.get_ocr_language_settings(aid, conn=conn),
-                    self.get_session_settings(aid, conn=conn),
-                )
-
-            found = await db.run(db.ALLIANCE, _read_alliance_settings, alliance_id)
-            if found is None:
-                return
-            alliance_id, alliance_name, _hist, (primary_lang, _stored_fb), (
-                timeout_min, auto_delete) = found
-            # Fresh upload: the event date isn't known until review, so resolve
-            # names as of today (~ current). The opt-in history flag still applies.
-            _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            roster = await self.get_match_roster_async(
-                alliance_id, as_of_date=_today, include_history=_hist)
-            # Auto-manage on -> fallbacks derived from roster names (persist-on-change);
-            # off -> the stored manual fallbacks. auto_managed_fallbacks handles both.
-            roster_names = [e[-1] for e in roster if len(e) >= 2]
-            fallback_langs = await asyncio.to_thread(
-                auto_managed_fallbacks, alliance_id, roster_names, primary=primary_lang)
-            fallback_langs = sorted(fallback_langs, key=lambda l: l in _LATIN_ONLY_LANGS)
-
-            session = BearSession(
-                cog=self,
-                channel_id=message.channel.id,
-                user_id=message.author.id,
-                alliance_id=alliance_id,
-                alliance_name=alliance_name,
-                roster=roster,
-                primary_lang=primary_lang,
-                fallback_langs=fallback_langs,
-                timeout_min=timeout_min,
-                auto_delete=auto_delete,
-            )
-            _active_sessions[key] = session
-
+            # Registered before the first await below (nothing awaits between the check above and here).
+            starting = asyncio.get_running_loop().create_future()
+            _session_starting[key] = starting
+            started = None
             try:
-                session.session_view = BearSessionView(session)
-                session.progress_msg = await message.channel.send(
-                    embed=session.build_progress_embed(),
-                    view=session.session_view,
+                channel_id = message.channel.id
+
+                def _read_alliance_settings(conn, aid):
+                    # Worker thread, own connection: reads only, returns plain data.
+                    if aid is None:
+                        row = conn.execute(
+                            "SELECT alliance_id FROM alliancesettings WHERE bear_score_channel = ?",
+                            (channel_id,),
+                        ).fetchone()
+                        if not row:
+                            return None
+                        aid = int(row[0])
+                    anrow = conn.execute(
+                        "SELECT name FROM alliance_list WHERE alliance_id = ?", (aid,)
+                    ).fetchone()
+                    return (
+                        aid,
+                        anrow[0] if anrow else f"Alliance {aid}",
+                        bool(self.get_bear_settings(aid, conn=conn).get("match_all_history")),
+                        self.get_ocr_language_settings(aid, conn=conn),
+                        self.get_session_settings(aid, conn=conn),
+                    )
+
+                found = await db.run(db.ALLIANCE, _read_alliance_settings, alliance_id)
+                if found is None:
+                    return
+                alliance_id, alliance_name, _hist, (primary_lang, _stored_fb), (
+                    timeout_min, auto_delete) = found
+                # Fresh upload: the event date isn't known until review, so resolve
+                # names as of today (~ current). The opt-in history flag still applies.
+                _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                roster = await self.get_match_roster_async(
+                    alliance_id, as_of_date=_today, include_history=_hist)
+                # Auto-manage on -> fallbacks derived from roster names (persist-on-change);
+                # off -> the stored manual fallbacks. auto_managed_fallbacks handles both.
+                roster_names = [e[-1] for e in roster if len(e) >= 2]
+                # same uncommitted-write guard db.run applies (this call writes alliance.sqlite)
+                db._refuse_if_persistent_write_open(db.ALLIANCE)
+                fallback_langs = await asyncio.to_thread(
+                    auto_managed_fallbacks, alliance_id, roster_names, primary=primary_lang)
+                fallback_langs = sorted(fallback_langs, key=lambda l: l in _LATIN_ONLY_LANGS)
+
+                session = BearSession(
+                    cog=self,
+                    channel_id=message.channel.id,
+                    user_id=message.author.id,
+                    alliance_id=alliance_id,
+                    alliance_name=alliance_name,
+                    roster=roster,
+                    primary_lang=primary_lang,
+                    fallback_langs=fallback_langs,
+                    timeout_min=timeout_min,
+                    auto_delete=auto_delete,
                 )
-            except Exception as e:
-                logger.warning(f"Bear hunt: could not post collecting message: {e}")
+                _active_sessions[key] = session
+                started = session
+
+                try:
+                    session.session_view = BearSessionView(session)
+                    session.progress_msg = await message.channel.send(
+                        embed=session.build_progress_embed(),
+                        view=session.session_view,
+                    )
+                except Exception as e:
+                    logger.warning(f"Bear hunt: could not post collecting message: {e}")
+            finally:
+                if _session_starting.get(key) is starting:
+                    del _session_starting[key]
+                if not starting.done():
+                    starting.set_result(started)
 
         await session.add_message(message, image_attachments)
 
