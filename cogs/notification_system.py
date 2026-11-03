@@ -46,8 +46,9 @@ def next_weekday_time(after, weekdays, hour, minute, tz):
 
 
 def _read_deletion_settings(cursor, guild_id):
-    """(delete_messages_enabled, default_delete_delay_minutes) for a guild; cursor may be a
-    connection (send path, inside db.run) or the cog's long-lived cursor (menus)."""
+    """(delete_messages_enabled, default_delete_delay_minutes) for a guild; cursor is the
+    send path's db.run cursor, or the long-lived cursor via get_guild_deletion_settings
+    (calculate_delete_time's fallback when no reader is passed)."""
     row = cursor.execute("""
             SELECT delete_messages_enabled, default_delete_delay_minutes
             FROM bear_trap_settings
@@ -890,14 +891,18 @@ class NotificationSystem(commands.Cog):
         while not self.bot.is_closed():
             try:
 
-                notifications = await db.fetchall(db.BEARTIME, """
+                # Polling read stays on the loop (ruling R5): beartime is WAL, so this
+                # autocommit SELECT never waits on a writer, and a worker hop every 0.1 s
+                # is constant executor load. A fresh cursor (conn.execute) with no await
+                # before fetchall: never clobbers a menu's self.cursor, leaves no snapshot open.
+                notifications = self.conn.execute("""
                     SELECT id, guild_id, channel_id, hour, minute, timezone, description,
                            notification_type, mention_type, repeat_enabled, repeat_minutes,
                            is_enabled, created_at, created_by, last_notification, next_notification,
                            event_type, instance_identifier, custom_delete_delay_minutes
                     FROM bear_notifications
                     WHERE is_enabled = 1 AND next_notification IS NOT NULL
-                """)
+                """).fetchall()
 
                 for notification in notifications:
                     try:
@@ -923,8 +928,9 @@ class NotificationSystem(commands.Cog):
                               sent_at: datetime, settings_reader=None) -> datetime | None:
         """Calculate when to delete a message. Returns None for non-last notifications.
 
-        settings_reader(guild_id) -> (enabled, default_delay_minutes); defaults to the
-        long-lived connection. The send path passes a reader on its db.run connection."""
+        settings_reader(guild_id) -> (enabled, default_delay_minutes). The send path (the
+        only caller) passes a reader on its db.run connection; without one this falls back
+        to get_guild_deletion_settings on the long-lived cursor."""
         is_last = (current_time == min(notification_times))
 
         if not is_last:
@@ -1145,12 +1151,15 @@ class NotificationSystem(commands.Cog):
                     # sent_at is stored as UTC wall time - compare in UTC, not the notification's timezone.
                     thirty_seconds_ago = (datetime.now(pytz.UTC) - timedelta(seconds=30)).strftime('%Y-%m-%d %H:%M:%S')
 
-                    count = (await db.fetchone(db.BEARTIME, """
+                    # Per-tick dedupe read stays on the loop (ruling R7), same pattern and WAL
+                    # rationale as check_notifications. _record_sent commits before its
+                    # db.run returns, so the next tick sees the history row.
+                    count = self.conn.execute("""
                         SELECT COUNT(*) FROM notification_history
                         WHERE notification_id = ?
                         AND notification_time = ?
                         AND sent_at >= ?
-                    """, (id, notify_time, thirty_seconds_ago)))[0]
+                    """, (id, notify_time, thirty_seconds_ago)).fetchone()[0]
                     if count == 0:
                         should_notify = True
                         current_time = notify_time

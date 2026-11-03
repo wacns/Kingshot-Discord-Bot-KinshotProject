@@ -331,25 +331,76 @@ def _is_long_lived_use(node: ast.AST) -> bool:
     )
 
 
-def _direct_long_lived_uses(func: ast.AST):
+# Polling reads that deliberately stay on the long-lived connection (rulings R5, R7).
+# beartime.sqlite runs in WAL mode, so an autocommit SELECT never waits on a writer
+# lock (it cannot cause the 30 s event-loop stall these guards exist for), while
+# moving a read that runs every 0.1 s into db.run would be a constant worker hop
+# (executor load on Pi hosts). Only this exact shape is exempt:
+#     self.conn.execute(<SQL containing marker>, ...).fetchall() / .fetchone()
+# - a fresh cursor, statement completed and reset in the same expression, no await
+# in between. Any other long-lived use in these functions is still an offender, and
+# each entry must match exactly one site (stale or ambiguous entries fail).
+# (file, function, marker in the SQL text)
+ALLOWED_LONG_LIVED_READS: set[tuple[str, str, str]] = {
+    ("cogs/notification_system.py", "check_notifications",
+     "WHERE is_enabled = 1 AND next_notification IS NOT NULL"),
+    ("cogs/notification_system.py", "process_notification",
+     "SELECT COUNT(*) FROM notification_history"),
+}
+
+
+def _allowed_read_key(node: ast.AST, rel: str, func_name: str):
+    """The ALLOWED_LONG_LIVED_READS entry `node` is, or None.
+
+    `node` must be `self.conn.execute(<str const>, ...).fetchall()|.fetchone()`."""
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"fetchall", "fetchone"} and not node.args):
+        return None
+    inner = node.func.value
+    if not (isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute)
+            and inner.func.attr == "execute"
+            and isinstance(inner.func.value, ast.Attribute)
+            and inner.func.value.attr == "conn"
+            and isinstance(inner.func.value.value, ast.Name)
+            and inner.func.value.value.id == "self"
+            and inner.args and isinstance(inner.args[0], ast.Constant)
+            and isinstance(inner.args[0].value, str)):
+        return None
+    sql = " ".join(inner.args[0].value.split())
+    for key in ALLOWED_LONG_LIVED_READS:
+        if key[0] == rel and key[1] == func_name and key[2] in sql:
+            return key
+    return None
+
+
+def _direct_long_lived_uses(func: ast.AST, rel: str = "", allowed_hits: list | None = None):
     """Line numbers of long-lived connection calls in func's own body."""
     stack = list(ast.iter_child_nodes(func))
     while stack:
         node = stack.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             continue
+        key = _allowed_read_key(node, rel, getattr(func, "name", ""))
+        if key is not None:
+            if allowed_hits is not None:
+                allowed_hits.append(key)
+            inner = node.func.value
+            # skip the exempt execute itself, still scan its arguments
+            stack.extend(inner.args)
+            stack.extend(kw.value for kw in inner.keywords)
+            continue
         if _is_long_lived_use(node):
             yield node.lineno
         stack.extend(ast.iter_child_nodes(node))
 
 
-def _long_lived_scan(rel: str):
+def _long_lived_scan(rel: str, allowed_hits: list | None = None):
     """(offender strings, names of listed functions found) for one file."""
     found = set()
     offenders = []
     for func in _named_functions(_parse(ROOT / rel), LONG_LIVED_TARGETS[rel]):
         found.add(func.name)
-        for ln in sorted(_direct_long_lived_uses(func)):
+        for ln in sorted(_direct_long_lived_uses(func, rel, allowed_hits)):
             offenders.append(f"{rel}:{ln} (in {func.name})")
     return offenders, found
 
@@ -368,6 +419,32 @@ def test_targets_do_not_use_long_lived_connections():
         "background path - move the work into `await db.run(db.<CONST>, _work, ...)` "
         "or db.fetch*/execute:\n  " + "\n  ".join(offenders)
     )
+
+
+def test_allowed_long_lived_reads_match_exactly_one_site():
+    hits = []
+    for rel in {k[0] for k in ALLOWED_LONG_LIVED_READS}:
+        _long_lived_scan(rel, hits)
+    bad = sorted(f"{k} matched {hits.count(k)} site(s)"
+                 for k in ALLOWED_LONG_LIVED_READS if hits.count(k) != 1)
+    assert not bad, "ALLOWED_LONG_LIVED_READS entries must match exactly one site:\n  " + "\n  ".join(bad)
+
+
+def test_allowed_long_lived_reads_exempt_only_the_exact_shape():
+    src = '''
+class C:
+    async def check_notifications(self):
+        a = self.conn.execute("SELECT 1 WHERE is_enabled = 1 AND next_notification IS NOT NULL").fetchall()
+        b = self.conn.execute("SELECT 1 WHERE is_enabled = 1 AND next_notification IS NOT NULL")
+        c = self.cursor.execute("SELECT 1 WHERE is_enabled = 1 AND next_notification IS NOT NULL").fetchall()
+        d = self.conn.execute("SELECT other").fetchall()
+        self.conn.commit()
+'''
+    func = next(_named_functions(ast.parse(src), {"check_notifications"}))
+    hits = []
+    lines = sorted(_direct_long_lived_uses(func, "cogs/notification_system.py", hits))
+    assert lines == [5, 6, 7, 8]
+    assert len(hits) == 1
 
 
 def test_long_lived_pending_only_shrinks():

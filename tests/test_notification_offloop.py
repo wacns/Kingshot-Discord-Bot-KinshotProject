@@ -2,8 +2,10 @@
 
 check_notifications, process_notification and the helpers it calls, plus the
 schedule-board refresh loops, must not touch the cogs' long-lived connections
-(`cog.conn`, `cog.cursor`): a 30 s lock wait there freezes the whole bot. Every
-cog connection here is a spy that records any use; each test expects none and
+(`cog.conn`, `cog.cursor`): a 30 s lock wait there freezes the whole bot. The
+exceptions are the two WAL polling reads (due list, dedupe COUNT; rulings R5/R7),
+which stay on `cog.conn` as fresh-cursor SELECTs. Every cog connection here is a
+spy that records any use (allowing only those SELECTs); each test checks that and
 checks what the path wrote and sent - including that the send still happens
 before the record update, and that a failed send records nothing.
 """
@@ -35,6 +37,48 @@ class _Spy:
             self._calls.append(f"{self._name}.{attr}")
             raise AssertionError(f"long-lived {self._name}.{attr} used on a background path")
         return _use
+
+
+_open_conns = []
+
+# The two polling reads that stay on the long-lived connection (rulings R5, R7).
+DUE_LIST = "WHERE is_enabled = 1 AND next_notification IS NOT NULL"
+DEDUPE = "SELECT COUNT(*) FROM notification_history"
+
+
+class _ReadConn:
+    """Long-lived connection stand-in: allows only `execute` of a SELECT (recorded by its
+    marker, run on a real connection, result fetched by the caller); refuses everything
+    else, like _Spy."""
+
+    def __init__(self, calls):
+        self._calls = calls
+        self.reads = []
+        self._real = None
+
+    def execute(self, sql, params=()):
+        norm = " ".join(sql.split())
+        if not norm.upper().startswith("SELECT"):
+            self._calls.append(f"conn.execute({norm[:30]})")
+            raise AssertionError(f"long-lived conn used for a write: {norm[:60]}")
+        self.reads.append(next((m for m in (DUE_LIST, DEDUPE) if m in norm), norm[:40]))
+        if self._real is None:
+            self._real = sqlite3.connect(DB)
+            _open_conns.append(self._real)
+        return self._real.execute(sql, params)
+
+    def __getattr__(self, attr):
+        def _use(*args, **kwargs):
+            self._calls.append(f"conn.{attr}")
+            raise AssertionError(f"long-lived conn.{attr} used on a background path")
+        return _use
+
+
+@pytest.fixture(autouse=True)
+def _close_conns():
+    yield
+    while _open_conns:
+        _open_conns.pop().close()
 
 
 @pytest.fixture
@@ -87,7 +131,7 @@ def _exec(sql, params=()):
 def _system_cog(channel=None, schedule=None):
     calls = []
     cog = ns.NotificationSystem.__new__(ns.NotificationSystem)
-    cog.conn = _Spy("conn", calls)
+    cog.conn = _ReadConn(calls)
     cog.cursor = _Spy("cursor", calls)
     cog.bot = SimpleNamespace(
         get_channel=lambda cid: channel,
@@ -154,7 +198,7 @@ class _Schedule:
 
 # --- notification_system --------------------------------------------------------------
 
-def test_send_then_record_in_one_transaction(workdir):
+def test_nothing_is_recorded_at_send_time_and_everything_after(workdir):
     next_at = datetime.now(pytz.UTC) + timedelta(seconds=3)
     _insert_notification(next_at=next_at)
     at_send = []
@@ -167,6 +211,7 @@ def test_send_then_record_in_one_transaction(workdir):
     asyncio.run(cog.process_notification(_row()))
 
     assert calls == []
+    assert cog.conn.reads == [DEDUPE]  # the only long-lived use: one polling read
     assert len(chan.sent) == 1
     # Nothing recorded yet when the message went out ...
     assert at_send == [(0, (None, None))]
@@ -322,7 +367,7 @@ def test_unexpected_delete_error_still_marks_rows_reached(workdir):
     assert marked == {601: 1, 602: 1, 603: 0}
 
 
-def test_check_notifications_reads_due_rows_off_the_loop(workdir, monkeypatch):
+def test_check_notifications_reads_due_rows_once_on_the_loop(workdir, monkeypatch):
     now = datetime.now(pytz.UTC)
     _insert_notification(1, next_at=now)
     _insert_notification(2, next_at=now)
@@ -338,11 +383,44 @@ def test_check_notifications_reads_due_rows_off_the_loop(workdir, monkeypatch):
 
     cog.process_notification = process
     monkeypatch.setattr(ns.asyncio, "sleep", lambda s: real_sleep(0))
+    hops = []
+    real_run = ns.db.run
+
+    async def counting_run(path, fn, *args):
+        hops.append(getattr(fn, "__name__", fn))
+        return await real_run(path, fn, *args)
+
+    monkeypatch.setattr(ns.db, "run", counting_run)
 
     asyncio.run(cog.check_notifications())
 
+    # The due list is read once per tick on the long-lived connection (ruling R5):
+    # one SELECT, no write, no worker hop.
+    assert cog.conn.reads == [DUE_LIST]
+    assert hops == []
+
     assert calls == []
     assert seen == [1]
+
+
+def test_dedupe_read_is_on_the_loop_and_blocks_a_second_send(workdir, monkeypatch):
+    _insert_notification(next_at=datetime.now(pytz.UTC) + timedelta(seconds=3))
+    chan = _Chan()
+    cog, calls = _system_cog(chan)
+
+    async def no_fetchone(*a, **k):
+        raise AssertionError("dedupe COUNT must not hop to a worker")
+
+    monkeypatch.setattr(ns.db, "fetchone", no_fetchone)
+
+    row = _row()
+    asyncio.run(cog.process_notification(row))
+    asyncio.run(cog.process_notification(row))  # next tick, same due row; history committed
+
+    assert calls == []
+    assert len(chan.sent) == 1, "the committed history row must dedupe the second pass"
+    assert cog.conn.reads == [DEDUPE, DEDUPE]
+    assert _q("SELECT COUNT(*) FROM notification_history") == [(1,)]
 
 
 def test_message_deletion_checker_commits_each_row_before_the_next_discord_call(workdir):
