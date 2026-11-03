@@ -10,6 +10,7 @@ from discord.ext import commands
 import sqlite3
 from discord.ext import tasks
 import asyncio
+import inspect
 import os
 import traceback
 import logging
@@ -145,7 +146,10 @@ class GiftOperations(commands.Cog):
     async def _execute_with_retry(self, operation, *args, max_retries=3, delay=0.1):
         for attempt in range(max_retries):
             try:
-                return operation(*args)
+                result = operation(*args)
+                if inspect.isawaitable(result):  # e.g. db.fetchall(...): retry covers the awaited work
+                    result = await result
+                return result
             except sqlite3.OperationalError as e:
                 if "database is locked" in str(e) and attempt < max_retries - 1:
                     self.logger.warning(f"Database locked, retrying in {delay}s (attempt {attempt + 1}/{max_retries})")
@@ -284,8 +288,9 @@ class GiftOperations(commands.Cog):
             if (message.author.bot and not message.flags.is_crossposted) or not message.guild:
                 return
 
-            self.cursor.execute("SELECT alliance_id FROM giftcode_channel WHERE channel_id = ?", (message.channel.id,))
-            channel_info = self.cursor.fetchone()
+            channel_info = await db.fetchone(
+                db.GIFTCODE, "SELECT alliance_id FROM giftcode_channel WHERE channel_id = ?",
+                (message.channel.id,))
             if not channel_info:
                 return
 

@@ -281,7 +281,11 @@ LONG_LIVED_TARGETS: dict[str, set[str]] = {
         "_processor_loop", "_warn_unhandled", "get_next_queued", "mark_active",
         "mark_completed", "mark_failed", "mark_cancelled", "requeue",
     },
-    "cogs/gift_redemption.py": {"handle_gift_validate_process", "periodic_validation_loop_body"},
+    "cogs/gift_redemption.py": {
+        "handle_gift_validate_process", "periodic_validation_loop_body",
+        "validate_gift_code_immediately", "mark_code_invalid_async", "claim_giftcode_rewards_wos",
+        "_process_auto_use", "_revalidation_loop", "_dm_global_admins", "cleanup_old_invalid_codes",
+    },
     "cogs/gift_operations.py": {"on_message"},
     "cogs/notification_system.py": {
         "check_notifications", "process_notification", "_notification_weekdays",
@@ -294,8 +298,6 @@ LONG_LIVED_TARGETS: dict[str, set[str]] = {
 # Files not converted yet; each conversion task removes its files. Task 6
 # deletes this set and its stale test once empty.
 LONG_LIVED_PENDING: set[str] = {
-    "cogs/gift_redemption.py",
-    "cogs/gift_operations.py",
     "cogs/notification_system.py",
     "cogs/notification_schedule.py",
     "cogs/bear_track.py",
