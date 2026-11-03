@@ -1,6 +1,7 @@
 """Weekday-repeat scheduling: today's later occurrence counts, and the local hour survives DST changes."""
 import asyncio
 import importlib
+import os
 import sqlite3
 from datetime import datetime
 from types import SimpleNamespace
@@ -60,7 +61,10 @@ def test_fixed_offset_timezone():
 
 
 def _mk_cog():
-    conn = sqlite3.connect(":memory:")
+    # process_notification reads and writes db/beartime.sqlite through db.run,
+    # relative to the cwd (the test chdirs into tmp_path).
+    os.makedirs("db", exist_ok=True)
+    conn = sqlite3.connect("db/beartime.sqlite")
     conn.execute("CREATE TABLE bear_notifications (id INTEGER PRIMARY KEY, next_notification TEXT)")
     conn.execute("CREATE TABLE notification_days (notification_id INTEGER, weekday TEXT)")
     cog = ns.NotificationSystem.__new__(ns.NotificationSystem)
@@ -78,13 +82,39 @@ def _frozen_datetime(fixed):
     return _Frozen
 
 
-def test_catch_up_after_downtime_picks_today(monkeypatch):
+def test_past_due_row_that_cannot_advance_is_not_rewritten(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    now = _local(BERLIN, 2026, 10, 7, 9, 0)
+    monkeypatch.setattr(ns, "datetime", _frozen_datetime(now))
+    cog = _mk_cog()
+    stuck = _local(BERLIN, 2026, 10, 5, 18, 30)
+    cog.cursor.execute("INSERT INTO bear_notifications VALUES (1, ?)", (stuck.isoformat(),))
+    cog.cursor.execute("CREATE TABLE writes (n INTEGER)")
+    cog.cursor.execute("CREATE TRIGGER count_writes AFTER UPDATE ON bear_notifications "
+                       "BEGIN INSERT INTO writes VALUES (1); END")
+    cog.conn.commit()
+    # Weekday repeat with no notification_days rows: next_weekday_time has nothing to offer.
+    row = (1, 10, 20, 18, 30, "Europe/Berlin", "Bear", 5, "none", 1, -1,
+           1, None, 1, None, stuck.isoformat(), "Bear Trap", None, None)
+
+    asyncio.run(cog.process_notification(row))
+    asyncio.run(cog.process_notification(row))
+
+    assert cog.cursor.execute("SELECT COUNT(*) FROM writes").fetchone()[0] == 0
+    stored = cog.cursor.execute("SELECT next_notification FROM bear_notifications WHERE id = 1").fetchone()[0]
+    assert stored == stuck.isoformat()
+    cog.conn.close()
+
+
+def test_catch_up_after_downtime_picks_today(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     now = _local(BERLIN, 2026, 10, 7, 9, 0)  # Wednesday morning
     monkeypatch.setattr(ns, "datetime", _frozen_datetime(now))
     cog = _mk_cog()
     missed = _local(BERLIN, 2026, 10, 5, 18, 30)  # Monday's send, missed while offline
     cog.cursor.execute("INSERT INTO bear_notifications VALUES (1, ?)", (missed.isoformat(),))
     cog.cursor.execute("INSERT INTO notification_days VALUES (1, ?)", (f"{MON}|{WED}",))
+    cog.conn.commit()
     row = (1, 10, 20, 18, 30, "Europe/Berlin", "Bear", 5, "none", 1, -1,
            1, None, 1, None, missed.isoformat(), "Bear Trap", None, None)
 
@@ -92,3 +122,4 @@ def test_catch_up_after_downtime_picks_today(monkeypatch):
 
     stored = cog.cursor.execute("SELECT next_notification FROM bear_notifications WHERE id = 1").fetchone()[0]
     assert datetime.fromisoformat(stored) == _local(BERLIN, 2026, 10, 7, 18, 30)
+    cog.conn.close()

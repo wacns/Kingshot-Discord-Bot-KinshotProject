@@ -185,8 +185,8 @@ async def handle_gift_validate_process(cog, process):
 
     # A code we hold as 'invalid' that shows up again is a reactivation candidate:
     # re-validate it instead of bailing. Other stored statuses stay "already exists".
-    cog.cursor.execute("SELECT validation_status FROM gift_codes WHERE giftcode = ?", (giftcode,))
-    row = cog.cursor.fetchone()
+    row = await db.fetchone(
+        db.GIFTCODE, "SELECT validation_status FROM gift_codes WHERE giftcode = ?", (giftcode,))
     if row and row[0] != 'invalid':
         cog.logger.info(f"Code '{giftcode}' already exists in database.")
         if message and channel:
@@ -219,8 +219,7 @@ async def handle_gift_validate_process(cog, process):
         if was_invalid:
             # Genuine reactivation: clear old redemptions so members can claim again.
             try:
-                cog.cursor.execute("DELETE FROM user_giftcodes WHERE giftcode = ?", (giftcode,))
-                cog.conn.commit()
+                await db.execute(db.GIFTCODE, "DELETE FROM user_giftcodes WHERE giftcode = ?", (giftcode,))
                 cog.logger.info(f"🔄 REACTIVATION: '{giftcode}' re-validated valid via {source}; cleared old redemption records")
             except Exception as e:
                 cog.logger.error(f"Error clearing reactivation history for '{giftcode}': {e}")
@@ -230,11 +229,10 @@ async def handle_gift_validate_process(cog, process):
     elif is_valid is None:
         # Save as validating ('pending' in the DB) so the 2h loop still sees it after a restart.
         try:
-            cog.cursor.execute("""
+            await db.execute(db.GIFTCODE, """
                 INSERT OR IGNORE INTO gift_codes (giftcode, date, validation_status)
                 VALUES (?, date('now'), 'pending')
             """, (giftcode,))
-            cog.conn.commit()
         except Exception as e:
             cog.logger.error(f"Could not mark code '{giftcode}' as validating: {e}")
             print(f"Could not mark code '{giftcode}' as validating: {e}")
@@ -381,8 +379,9 @@ async def _send_validation_response(cog, message, giftcode, is_valid, validation
 
 async def _process_auto_use(cog, giftcode):
     """Process auto-use for valid gift codes."""
-    cog.cursor.execute("SELECT alliance_id FROM giftcodecontrol WHERE status = 1 ORDER BY priority ASC, alliance_id ASC")
-    auto_alliances = cog.cursor.fetchall()
+    auto_alliances = await db.fetchall(
+        db.GIFTCODE,
+        "SELECT alliance_id FROM giftcodecontrol WHERE status = 1 ORDER BY priority ASC, alliance_id ASC")
 
     if auto_alliances:
         cog.logger.info(f"Queueing auto-use for {len(auto_alliances)} alliances for code '{giftcode}'")
@@ -393,8 +392,8 @@ async def _process_auto_use(cog, giftcode):
 async def _dm_global_admins(cog, embed):
     """DM `embed` to every global admin; per-admin failures are logged, not raised."""
     try:
-        cog.settings_cursor.execute("SELECT id FROM admin WHERE is_initial = 1")
-        admin_ids = [row[0] for row in cog.settings_cursor.fetchall()]
+        admin_ids = [row[0] for row in await db.fetchall(
+            db.SETTINGS, "SELECT id FROM admin WHERE is_initial = 1")]
     except Exception:
         admin_ids = []
     for admin_id in admin_ids:
@@ -442,8 +441,8 @@ async def _revalidation_loop(cog, giftcode, source):
 
             # Stop if another path already resolved it.
             try:
-                cog.cursor.execute("SELECT validation_status FROM gift_codes WHERE giftcode = ?", (giftcode,))
-                row = cog.cursor.fetchone()
+                row = await db.fetchone(
+                    db.GIFTCODE, "SELECT validation_status FROM gift_codes WHERE giftcode = ?", (giftcode,))
             except Exception:
                 row = None
             if row and row[0] in ('validated', 'invalid'):
@@ -462,8 +461,10 @@ async def _revalidation_loop(cog, giftcode, source):
                 if hasattr(cog, 'api') and cog.api:
                     asyncio.create_task(cog.api.add_giftcode(giftcode))
                 try:
-                    cog.cursor.execute("SELECT alliance_id FROM giftcodecontrol WHERE status = 1 ORDER BY priority ASC, alliance_id ASC")
-                    auto_alliances = cog.cursor.fetchall() or []
+                    auto_alliances = await db.fetchall(
+                        db.GIFTCODE,
+                        "SELECT alliance_id FROM giftcodecontrol WHERE status = 1 ORDER BY priority ASC, alliance_id ASC",
+                    ) or []
                 except Exception:
                     auto_alliances = []
                 await start_auto_redemption(cog, giftcode, auto_alliances, source=f"{source}-retry")
@@ -790,8 +791,8 @@ async def validate_gift_code_immediately(cog, giftcode, source="unknown", force=
 
         # Short-circuit on a known verdict unless forced to re-probe (e.g. reactivation).
         if not force:
-            cog.cursor.execute("SELECT validation_status FROM gift_codes WHERE giftcode = ?", (giftcode,))
-            existing = cog.cursor.fetchone()
+            existing = await db.fetchone(
+                db.GIFTCODE, "SELECT validation_status FROM gift_codes WHERE giftcode = ?", (giftcode,))
             if existing:
                 status = existing[0]
                 if status == 'invalid':
@@ -817,11 +818,10 @@ async def validate_gift_code_immediately(cog, giftcode, source="unknown", force=
         # Handle validation results
         if status in VALID_REDEEM_STATUSES:
             # Valid code - mark as validated
-            cog.cursor.execute("""
+            await db.execute(db.GIFTCODE, """
                 INSERT OR REPLACE INTO gift_codes (giftcode, date, validation_status)
                 VALUES (?, date('now'), 'validated')
             """, (giftcode,))
-            cog.conn.commit()
 
             # These statuses mean the code is valid but has requirements
             if status in ["TOO_SMALL_SPEND_MORE", "TOO_POOR_SPEND_MORE"]:
@@ -835,7 +835,7 @@ async def validate_gift_code_immediately(cog, giftcode, source="unknown", force=
 
         elif status in INVALID_REDEEM_STATUSES:
             # Invalid code - mark as invalid
-            mark_code_invalid(cog, giftcode)
+            await mark_code_invalid_async(cog, giftcode)
 
             reason_map = {
                 "TIME_ERROR": "Code has expired",
@@ -991,6 +991,35 @@ async def post_redemption_summary(cog, channel, alliance_id, alliance_name, gift
         await _post(embed)
 
 
+# Shared by the loop-thread helpers below and the worker-side writes of the
+# off-loop paths, so both run the same statements.
+_UPSERT_USER_GIFTCODES_SQL = """
+            INSERT INTO user_giftcodes (fid, giftcode, status, last_attempt_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(fid, giftcode) DO UPDATE SET
+                status = excluded.status,
+                last_attempt_at = excluded.last_attempt_at
+            WHERE user_giftcodes.status NOT IN ('SUCCESS', 'RECEIVED', 'SAME TYPE EXCHANGE')
+        """
+
+_VALIDATE_PENDING_SQL = """
+            UPDATE gift_codes
+            SET validation_status = 'validated'
+            WHERE giftcode = ? AND validation_status = 'pending'
+        """
+
+_MARK_INVALID_SQL = """
+            UPDATE gift_codes
+            SET validation_status = 'invalid'
+            WHERE giftcode = ? AND validation_status != 'invalid'
+        """
+
+_PENDING_CHECK_SQL = """
+                    SELECT validation_status FROM gift_codes
+                    WHERE giftcode = ? AND validation_status = 'pending'
+                """
+
+
 def batch_insert_user_giftcodes(cog, user_giftcode_data):
     """Batch upsert per-account redemption results (success and failure).
 
@@ -1004,14 +1033,7 @@ def batch_insert_user_giftcodes(cog, user_giftcode_data):
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     rows = [(fid, giftcode, status, ts) for (fid, giftcode, status) in user_giftcode_data]
     try:
-        cog.cursor.executemany("""
-            INSERT INTO user_giftcodes (fid, giftcode, status, last_attempt_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(fid, giftcode) DO UPDATE SET
-                status = excluded.status,
-                last_attempt_at = excluded.last_attempt_at
-            WHERE user_giftcodes.status NOT IN ('SUCCESS', 'RECEIVED', 'SAME TYPE EXCHANGE')
-        """, rows)
+        cog.cursor.executemany(_UPSERT_USER_GIFTCODES_SQL, rows)
 
         cog.conn.commit()
         cog.logger.info(f"GiftOps: Recorded {len(rows)} user giftcode result(s)")
@@ -1028,11 +1050,7 @@ def batch_update_gift_codes_validation(cog, giftcodes_to_validate):
 
     try:
         validation_data = [(giftcode,) for giftcode in giftcodes_to_validate]
-        cog.cursor.executemany("""
-            UPDATE gift_codes
-            SET validation_status = 'validated'
-            WHERE giftcode = ? AND validation_status = 'pending'
-        """, validation_data)
+        cog.cursor.executemany(_VALIDATE_PENDING_SQL, validation_data)
 
         cog.conn.commit()
         updated_count = cog.cursor.rowcount
@@ -1068,11 +1086,7 @@ def batch_get_user_giftcode_status(cog, giftcode, fids):
 def mark_code_invalid(cog, giftcode):
     """Mark a single gift code as invalid."""
     try:
-        cog.cursor.execute("""
-            UPDATE gift_codes
-            SET validation_status = 'invalid'
-            WHERE giftcode = ? AND validation_status != 'invalid'
-        """, (giftcode,))
+        cog.cursor.execute(_MARK_INVALID_SQL, (giftcode,))
 
         cog.conn.commit()
         if cog.cursor.rowcount > 0:
@@ -1081,6 +1095,48 @@ def mark_code_invalid(cog, giftcode):
     except Exception as e:
         cog.logger.exception(f"GiftOps: Error marking code '{giftcode}' as invalid: {e}")
         cog.conn.rollback()
+
+
+async def mark_code_invalid_async(cog, giftcode):
+    """mark_code_invalid off the event loop, for the validation paths. The sync one
+    stays for the redemption run (use_giftcode_for_alliance), which still uses cog.conn."""
+    try:
+        updated = await db.execute(db.GIFTCODE, _MARK_INVALID_SQL, (giftcode,))
+        if updated > 0:
+            cog.logger.info(f"GiftOps: Marked gift code '{giftcode}' as invalid")
+
+    except Exception as e:
+        cog.logger.exception(f"GiftOps: Error marking code '{giftcode}' as invalid: {e}")
+
+
+def _record_redeem_success(conn, rows, giftcode):
+    """Worker: claim_giftcode_rewards_wos's success write. Same two transactions as
+    batch_insert_user_giftcodes then batch_update_gift_codes_validation; errors come
+    back as values so the loop logs them in the same order as before."""
+    out = {"insert_error": None, "select_error": None, "pending": False,
+           "updated": 0, "update_error": None}
+    cursor = conn.cursor()
+    try:
+        cursor.executemany(_UPSERT_USER_GIFTCODES_SQL, rows)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        out["insert_error"] = e
+    try:
+        cursor.execute(_PENDING_CHECK_SQL, (giftcode,))
+        out["pending"] = cursor.fetchone() is not None
+    except Exception as e:
+        out["select_error"] = e
+        return out
+    if out["pending"]:
+        try:
+            cursor.executemany(_VALIDATE_PENDING_SQL, [(giftcode,)])
+            conn.commit()
+            out["updated"] = cursor.rowcount
+        except Exception as e:
+            conn.rollback()
+            out["update_error"] = e
+    return out
 
 
 def batch_process_alliance_results(cog, results_batch):
@@ -1949,8 +2005,9 @@ async def claim_giftcode_rewards_wos(cog, player_id, giftcode, *, skip_cache: bo
         if not skip_cache:
             test_fid = cog.get_test_fid()
             if player_id != test_fid:
-                cog.cursor.execute("SELECT status FROM user_giftcodes WHERE fid = ? AND giftcode = ?", (player_id, giftcode))
-                existing_record = cog.cursor.fetchone()
+                existing_record = await db.fetchone(
+                    db.GIFTCODE, "SELECT status FROM user_giftcodes WHERE fid = ? AND giftcode = ?",
+                    (player_id, giftcode))
                 if existing_record:
                     if existing_record[0] in ["SUCCESS", "RECEIVED", "SAME TYPE EXCHANGE", "TIME_ERROR", "CDK_NOT_FOUND", "USAGE_LIMIT"]:
                         status = existing_record[0]
@@ -1986,25 +2043,41 @@ async def claim_giftcode_rewards_wos(cog, player_id, giftcode, *, skip_cache: bo
         # Handle database updates for successful redemptions
         if player_id != cog.get_test_fid() and status in ["SUCCESS", "RECEIVED", "SAME TYPE EXCHANGE"]:
             try:
-                user_giftcode_data = [(player_id, giftcode, status)]
-                batch_insert_user_giftcodes(cog, user_giftcode_data)
+                # One hop: record the result, then validate the code if it is still pending
+                # (same statements and commits as batch_insert_user_giftcodes and
+                # batch_update_gift_codes_validation).
+                ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                rows = [(player_id, giftcode, status, ts)]
+                outcome = await db.run(db.GIFTCODE, _record_redeem_success, rows, giftcode)
+                insert_error = outcome["insert_error"]
+                if insert_error is not None:
+                    cog.logger.error(f"GiftOps: Error in batch_insert_user_giftcodes: {insert_error}",
+                                     exc_info=insert_error)
+                else:
+                    cog.logger.info(f"GiftOps: Recorded {len(rows)} user giftcode result(s)")
 
                 # Check if code needs validation
-                cog.cursor.execute("""
-                    SELECT validation_status FROM gift_codes
-                    WHERE giftcode = ? AND validation_status = 'pending'
-                """, (giftcode,))
+                if outcome["select_error"] is not None:
+                    raise outcome["select_error"]
 
-                if cog.cursor.fetchone():
-                    giftcodes_to_validate = [giftcode]
-                    batch_update_gift_codes_validation(cog, giftcodes_to_validate)
+                if outcome["pending"]:
+                    update_error = outcome["update_error"]
+                    if update_error is not None:
+                        cog.logger.error(
+                            f"GiftOps: Error in batch_update_gift_codes_validation: {update_error}",
+                            exc_info=update_error)
+                    elif outcome["updated"] > 0:
+                        cog.logger.info(f"GiftOps: Batch validated {outcome['updated']} gift codes")
 
-                    # If this code was just validated for the first time, send to API
-                    cog.logger.info(f"Code '{giftcode}' validated for the first time - sending to API")
-                    try:
-                        asyncio.create_task(cog.api.add_giftcode(giftcode))
-                    except Exception as api_err:
-                        cog.logger.exception(f"Error sending validated code '{giftcode}' to API: {api_err}")
+                    # Only the claim whose UPDATE flipped the row sends it to the API; a concurrent
+                    # claim that saw it pending but lost the race updated nothing.
+                    if outcome["updated"] > 0:
+                        # This code was just validated for the first time, send to API
+                        cog.logger.info(f"Code '{giftcode}' validated for the first time - sending to API")
+                        try:
+                            asyncio.create_task(cog.api.add_giftcode(giftcode))
+                        except Exception as api_err:
+                            cog.logger.exception(f"Error sending validated code '{giftcode}' to API: {api_err}")
 
                 cog.giftlog.info(f"DATABASE - Saved/Updated status for User {player_id}, Code '{giftcode}', Status {status}\n")
             except Exception as db_err:
@@ -2331,41 +2404,57 @@ async def _send_scan_results_message(cog, channel: discord.TextChannel, results:
         cog.logger.exception(f"Error sending scan results message: {e}")
 
 
+def _delete_old_invalid_codes(conn, cutoff_date):
+    """Worker: count, then delete, old invalid codes and orphaned redemptions in one
+    transaction (db.run commits). Returns the count."""
+    cursor = conn.cursor()
+    # Get count of codes that will be deleted for logging
+    cursor.execute("""
+            SELECT COUNT(*) FROM gift_codes
+            WHERE validation_status = 'invalid'
+            AND date < ?
+        """, (cutoff_date,))
+    delete_count = cursor.fetchone()[0]
+
+    if delete_count > 0:
+        # Delete old invalid codes
+        cursor.execute("""
+                DELETE FROM gift_codes
+                WHERE validation_status = 'invalid'
+                AND date < ?
+            """, (cutoff_date,))
+
+        # Also clean up any related user_giftcodes entries for deleted codes
+        cursor.execute("""
+                DELETE FROM user_giftcodes
+                WHERE giftcode NOT IN (SELECT giftcode FROM gift_codes)
+            """)
+    return delete_count
+
+
 async def cleanup_old_invalid_codes(cog):
     """Remove invalid gift codes older than 7 days from the database."""
     try:
         # Calculate the cutoff date (7 days ago)
         cutoff_date = (datetime.now() - timedelta(days=7)).isoformat()
 
-        # Get count of codes that will be deleted for logging
-        cog.cursor.execute("""
-            SELECT COUNT(*) FROM gift_codes
-            WHERE validation_status = 'invalid'
-            AND date < ?
-        """, (cutoff_date,))
-        delete_count = cog.cursor.fetchone()[0]
+        delete_count = await db.run(db.GIFTCODE, _delete_old_invalid_codes, cutoff_date)
 
         if delete_count > 0:
-            # Delete old invalid codes
-            cog.cursor.execute("""
-                DELETE FROM gift_codes
-                WHERE validation_status = 'invalid'
-                AND date < ?
-            """, (cutoff_date,))
-
-            # Also clean up any related user_giftcodes entries for deleted codes
-            cog.cursor.execute("""
-                DELETE FROM user_giftcodes
-                WHERE giftcode NOT IN (SELECT giftcode FROM gift_codes)
-            """)
-
-            cog.conn.commit()
             cog.logger.info(f"Cleaned up {delete_count} invalid gift codes older than 7 days")
         else:
             cog.logger.info("No old invalid gift codes found for cleanup")
 
     except Exception as e:
         cog.logger.exception(f"Error during invalid codes cleanup: {e}")
+
+
+def _invalidate_periodic_code(conn, giftcode, test_fid):
+    """Worker: mark a code invalid and clear the validation ID's redemption, one transaction."""
+    cursor = conn.cursor()
+    cursor.execute("UPDATE gift_codes SET validation_status = 'invalid' WHERE giftcode = ?", (giftcode,))
+    # Clear redemption status for the test fid
+    cursor.execute("DELETE FROM user_giftcodes WHERE giftcode = ? AND fid = ?", (giftcode, test_fid))
 
 
 async def periodic_validation_loop_body(cog):
@@ -2384,13 +2473,12 @@ async def periodic_validation_loop_body(cog):
         # Check if validation is already in progress to avoid conflicts
         async with cog._validation_lock:
             # Get codes that need validation (pending or validated)
-            cog.cursor.execute("""
+            codes_to_check = await db.fetchall(db.GIFTCODE, """
                 SELECT giftcode, validation_status
                 FROM gift_codes
                 WHERE validation_status IN ('pending', 'validated')
                 ORDER BY validation_status = 'pending' DESC, date DESC
             """)
-            codes_to_check = cog.cursor.fetchall()
 
             if not codes_to_check:
                 cog.logger.info("GiftOps: No codes need periodic validation.")
@@ -2425,10 +2513,7 @@ async def periodic_validation_loop_body(cog):
                     if status in ["TIME_ERROR", "CDK_NOT_FOUND", "USAGE_LIMIT"]: # Code is now invalid
                         cog.logger.info(f"GiftOps: Code '{giftcode}' is now invalid (status: {status}). Updating database.")
 
-                        cog.cursor.execute("UPDATE gift_codes SET validation_status = 'invalid' WHERE giftcode = ?", (giftcode,))
-                        # Clear redemption status for the test fid
-                        cog.cursor.execute("DELETE FROM user_giftcodes WHERE giftcode = ? AND fid = ?", (giftcode, test_fid))
-                        cog.conn.commit()
+                        await db.run(db.GIFTCODE, _invalidate_periodic_code, giftcode, test_fid)
 
                         codes_invalidated += 1
 
@@ -2449,17 +2534,15 @@ async def periodic_validation_loop_body(cog):
 
                         if current_status == 'pending':
                             cog.logger.info(f"GiftOps: Code '{giftcode}' confirmed valid. Updating status to 'validated'.")
-                            cog.cursor.execute("UPDATE gift_codes SET validation_status = 'validated' WHERE giftcode = ? AND validation_status = 'pending'", (giftcode,))
-                            cog.conn.commit()
+                            await db.execute(db.GIFTCODE, "UPDATE gift_codes SET validation_status = 'validated' WHERE giftcode = ? AND validation_status = 'pending'", (giftcode,))
 
                             if hasattr(cog, 'api') and cog.api:
                                 asyncio.create_task(cog.api.add_giftcode(giftcode))
 
                             try:
-                                await cog._execute_with_retry(
-                                    lambda: cog.cursor.execute("SELECT alliance_id FROM giftcodecontrol WHERE status = 1 ORDER BY priority ASC, alliance_id ASC")
-                                )
-                                auto_alliances = cog.cursor.fetchall() or []
+                                auto_alliances = await cog._execute_with_retry(
+                                    lambda: db.fetchall(db.GIFTCODE, "SELECT alliance_id FROM giftcodecontrol WHERE status = 1 ORDER BY priority ASC, alliance_id ASC")
+                                ) or []
                             except sqlite3.OperationalError as e:
                                 error_msg = f"Auto-alliance query failed after retries for code '{giftcode}': {e}"
                                 cog.logger.error(error_msg)

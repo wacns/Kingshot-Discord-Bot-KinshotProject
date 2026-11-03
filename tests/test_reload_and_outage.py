@@ -7,6 +7,7 @@ import sqlite3
 import types
 
 import discord
+import pytest
 
 pqmod = importlib.import_module("cogs.process_queue")
 go = importlib.import_module("cogs.gift_operations")
@@ -15,13 +16,20 @@ id_channel = importlib.import_module("cogs.alliance_id_channel")
 bot_health = importlib.import_module("cogs.bot_health")
 
 
+@pytest.fixture(autouse=True)
+def _in_tmp_dir(tmp_path, monkeypatch):
+    # The processor reads and writes db.SETTINGS (db/settings.sqlite) relative to the cwd.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "db").mkdir()
+
+
 def _http_error(cls, status):
     return cls(types.SimpleNamespace(status=status, reason="x"), "x")
 
 
 def _queue(tmp_path, bot=None):
     pq = pqmod.ProcessQueue.__new__(pqmod.ProcessQueue)
-    conn = sqlite3.connect(tmp_path / "settings.sqlite")
+    conn = sqlite3.connect(tmp_path / "db" / "settings.sqlite")
     conn.execute(
         "CREATE TABLE process_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, "
         "action TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', priority INTEGER NOT NULL, "

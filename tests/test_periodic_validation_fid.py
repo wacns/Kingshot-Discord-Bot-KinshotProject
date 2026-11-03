@@ -5,6 +5,7 @@ codes stayed pending and never auto-redeemed.
 """
 import asyncio
 import importlib
+import os
 import sqlite3
 from types import SimpleNamespace
 
@@ -52,15 +53,22 @@ def test_no_id_with_state_skips_the_run(monkeypatch):
 
 
 def _settings_cog(saved_fid):
-    conn = sqlite3.connect(":memory:")
-    gs.ensure_test_fid_settings(conn)
-    conn.execute("DELETE FROM test_fid_settings")
-    conn.execute("INSERT INTO test_fid_settings (test_fid, kid) VALUES (?, 259)", (saved_fid,))
+    # get_validation_fid reads db/settings.sqlite through db.fetchone, relative to the cwd.
+    os.makedirs("db", exist_ok=True)
+    conn = sqlite3.connect("db/settings.sqlite")
+    try:
+        gs.ensure_test_fid_settings(conn)
+        conn.execute("DELETE FROM test_fid_settings")
+        conn.execute("INSERT INTO test_fid_settings (test_fid, kid) VALUES (?, 259)", (saved_fid,))
+        conn.commit()
+    finally:
+        conn.close()
     logger = SimpleNamespace(info=lambda *a: None, exception=lambda *a: None)
-    return SimpleNamespace(settings_cursor=conn.cursor(), logger=logger)
+    return SimpleNamespace(logger=logger)
 
 
-def test_configured_test_id_is_used_without_a_player_lookup():
+def test_configured_test_id_is_used_without_a_player_lookup(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     cog = _settings_cog("12345678")
     assert asyncio.run(gs.get_validation_fid(cog)) == ("12345678", "test_fid")
     assert not hasattr(gs, "verify_test_fid")

@@ -16,7 +16,7 @@ def _mk_cog(routed):
     alliance.execute("CREATE TABLE alliancesettings (alliance_id INTEGER, bear_score_channel INTEGER, bear_keywords TEXT)")
     alliance.execute("INSERT INTO alliancesettings VALUES (5, 1, 'bear')")
     cog = bt.BearTrack.__new__(bt.BearTrack)
-    cog.alliance_cursor = alliance.cursor()
+    cog.alliance_conn = alliance
 
     async def fake_process(message, *, alliance_id=None):
         routed.append(message)

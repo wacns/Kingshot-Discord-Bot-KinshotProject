@@ -11,13 +11,28 @@ import sqlite3
 from types import SimpleNamespace
 
 import discord
+import pytest
 
 go = importlib.import_module("cogs.gift_operations")
 gr = importlib.import_module("cogs.gift_redemption")
 
 
+@pytest.fixture(autouse=True)
+def _workdir(tmp_path, monkeypatch):
+    # on_message reads db/giftcode.sqlite through db.fetchone, relative to the cwd.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "db").mkdir()
+    yield
+    while _OPEN:
+        _OPEN.pop().close()
+
+
+_OPEN = []
+
+
 def _mk_cog(channel_configured=True):
-    mc = sqlite3.connect(":memory:")
+    mc = sqlite3.connect("db/giftcode.sqlite")
+    _OPEN.append(mc)
     mc.execute("CREATE TABLE giftcode_channel (channel_id INTEGER, alliance_id INTEGER)")
     if channel_configured:
         mc.execute("INSERT INTO giftcode_channel VALUES (77, 5)")

@@ -7,6 +7,7 @@ import contextlib
 import os
 import sqlite3
 import threading
+import weakref
 from collections.abc import Callable, Iterator, Sequence
 from typing import TypeVar
 
@@ -36,6 +37,10 @@ WAL_FILES: frozenset[str] = frozenset({
 })
 
 _THREAD_CHECK_ENV = "KSBOT_DB_THREAD_CHECK"
+
+# Test mode only: weakly tracked long-lived connections, by file basename, so run() can
+# refuse to dispatch while one holds an uncommitted write on the same file.
+_persistent_by_name: dict[str, "weakref.WeakSet[sqlite3.Connection]"] = {}
 
 
 def _apply_pragmas(conn: sqlite3.Connection, path: str) -> None:
@@ -93,6 +98,8 @@ def connect_persistent(path: str, *, timeout: float = DEFAULT_TIMEOUT) -> sqlite
                                factory=_OwnerCheckedConnection)
         conn._path = path
         conn._owner = threading.get_ident()
+        _persistent_by_name.setdefault(
+            os.path.basename(path), weakref.WeakSet()).add(conn)
     else:
         conn = sqlite3.connect(path, timeout=timeout, check_same_thread=False)
     try:
@@ -121,11 +128,26 @@ def connect(path: str, *, timeout: float = DEFAULT_TIMEOUT) -> Iterator[sqlite3.
         conn.close()
 
 
+def _refuse_if_persistent_write_open(path: str) -> None:
+    for conn in list(_persistent_by_name.get(os.path.basename(path), ())):
+        try:
+            # base-class attribute: readable from any thread, not an owner-checked call
+            pending = conn.in_transaction
+        except sqlite3.ProgrammingError:
+            continue  # closed
+        if pending:
+            raise RuntimeError(
+                f"persistent connection to {path} has an uncommitted transaction; "
+                "commit before db.run on the same file")
+
+
 async def run(path: str, fn: Callable[..., T], *args) -> T:
     """Run fn(conn, *args) on a worker thread inside connect(path).
 
     Cancelling the awaiting coroutine does not stop the worker thread: the work still
     runs to completion and commits."""
+    _refuse_if_persistent_write_open(path)
+
     def work() -> T:
         with connect(path) as conn:
             return fn(conn, *args)

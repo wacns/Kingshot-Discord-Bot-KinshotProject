@@ -45,6 +45,21 @@ def next_weekday_time(after, weekdays, hour, minute, tz):
     return None
 
 
+def _read_deletion_settings(cursor, guild_id):
+    """(delete_messages_enabled, default_delete_delay_minutes) for a guild; cursor is the
+    send path's db.run cursor, or the long-lived cursor via get_guild_deletion_settings
+    (calculate_delete_time's fallback when no reader is passed)."""
+    row = cursor.execute("""
+            SELECT delete_messages_enabled, default_delete_delay_minutes
+            FROM bear_trap_settings
+            WHERE guild_id = ?
+        """, (guild_id,)).fetchone()
+    if row:
+        return (bool(row[0]), row[1])
+    # Default if not found
+    return (True, 60)
+
+
 # Friendly wording for pause reasons shown to admins (console + quarantine DM).
 _PAUSE_REASON_PHRASES = {
     "channel_deleted": "the channel was deleted",
@@ -797,13 +812,12 @@ class NotificationSystem(commands.Cog):
 
     async def get_notification_embed(self, notification_id: int) -> dict:
         try:
-            self.cursor.execute("""
+            result = await db.fetchone(db.BEARTIME, """
                 SELECT title, description, color, image_url, thumbnail_url, footer, author, mention_message
-                FROM bear_notification_embeds 
+                FROM bear_notification_embeds
                 WHERE notification_id = ?
             """, (notification_id,))
 
-            result = self.cursor.fetchone()
             if result:
                 return {
                     'title': result[0],
@@ -854,12 +868,15 @@ class NotificationSystem(commands.Cog):
                         logger.error(f"Error deleting message {message_id}: {e}")
                         print(f"Error deleting message {message_id}: {e}")
                     finally:
-                        # Mark as deleted regardless
+                        # Mark as deleted regardless. Committed per row so no write is held
+                        # on this connection across the next Discord call (check_notifications
+                        # writes the same file through db.run meanwhile).
                         self.cursor.execute("""
                             UPDATE notification_history
                             SET deleted_at = ?
                             WHERE id = ?
                         """, (now.isoformat(), history_id))
+                        self.conn.commit()
 
                 self.conn.commit()
 
@@ -874,15 +891,18 @@ class NotificationSystem(commands.Cog):
         while not self.bot.is_closed():
             try:
 
-                self.cursor.execute("""
+                # Polling read stays on the loop (ruling R5): beartime is WAL, so this
+                # autocommit SELECT never waits on a writer, and a worker hop every 0.1 s
+                # is constant executor load. A fresh cursor (conn.execute) with no await
+                # before fetchall: never clobbers a menu's self.cursor, leaves no snapshot open.
+                notifications = self.conn.execute("""
                     SELECT id, guild_id, channel_id, hour, minute, timezone, description,
                            notification_type, mention_type, repeat_enabled, repeat_minutes,
                            is_enabled, created_at, created_by, last_notification, next_notification,
                            event_type, instance_identifier, custom_delete_delay_minutes
                     FROM bear_notifications
                     WHERE is_enabled = 1 AND next_notification IS NOT NULL
-                """)
-                notifications = self.cursor.fetchall()
+                """).fetchall()
 
                 for notification in notifications:
                     try:
@@ -901,21 +921,16 @@ class NotificationSystem(commands.Cog):
 
     def get_guild_deletion_settings(self, guild_id: int) -> tuple[bool, int]:
         """Get deletion settings for a guild. Returns (enabled, default_delay_minutes)"""
-        self.cursor.execute("""
-            SELECT delete_messages_enabled, default_delete_delay_minutes
-            FROM bear_trap_settings
-            WHERE guild_id = ?
-        """, (guild_id,))
-        row = self.cursor.fetchone()
-        if row:
-            return (bool(row[0]), row[1])
-        # Default if not found
-        return (True, 60)
+        return _read_deletion_settings(self.cursor, guild_id)
 
     def calculate_delete_time(self, guild_id: int, event_type: str,
                               custom_delete_delay: int, notification_times: list, current_time: int,
-                              sent_at: datetime) -> datetime | None:
-        """Calculate when to delete a message. Returns None for non-last notifications."""
+                              sent_at: datetime, settings_reader=None) -> datetime | None:
+        """Calculate when to delete a message. Returns None for non-last notifications.
+
+        settings_reader(guild_id) -> (enabled, default_delay_minutes). The send path (the
+        only caller) passes a reader on its db.run connection; without one this falls back
+        to get_guild_deletion_settings on the long-lived cursor."""
         is_last = (current_time == min(notification_times))
 
         if not is_last:
@@ -923,7 +938,7 @@ class NotificationSystem(commands.Cog):
             return None
 
         # This is the last notification - calculate delete time
-        deletion_enabled, default_delay = self.get_guild_deletion_settings(guild_id)
+        deletion_enabled, default_delay = (settings_reader or self.get_guild_deletion_settings)(guild_id)
 
         if not deletion_enabled:
             return None  # Deletion disabled
@@ -950,14 +965,15 @@ class NotificationSystem(commands.Cog):
 
         return sent_at + timedelta(minutes=delay_minutes)
 
-    async def store_message_for_deletion(self, notification_id: int, notification_time: int,
-                                          channel_id: int, message_id: int,
-                                          scheduled_delete_at: datetime | None):
-        """Store a sent message ID for later deletion"""
+    @staticmethod
+    def store_message_for_deletion(conn, notification_id: int, notification_time: int,
+                                   channel_id: int, message_id: int,
+                                   scheduled_delete_at: datetime | None):
+        """Store a sent message ID for later deletion (runs inside the send path's db.run)."""
         current_time_str = datetime.now(pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')
         delete_at_str = scheduled_delete_at.astimezone(pytz.UTC).isoformat() if scheduled_delete_at else None
 
-        self.cursor.execute("""
+        conn.execute("""
             INSERT INTO notification_history
             (notification_id, notification_time, message_id, channel_id, scheduled_delete_at, sent_at)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -976,63 +992,77 @@ class NotificationSystem(commands.Cog):
                 return
 
             # Find messages that should be deleted on next notification (scheduled_delete_at IS NULL)
-            if event_type and instance_identifier:
-                # Get sibling notification IDs (same event_type, same channel, different instance)
-                self.cursor.execute("""
-                    SELECT id FROM bear_notifications
-                    WHERE channel_id = ?
-                      AND event_type = ?
-                      AND instance_identifier != ?
-                      AND is_enabled = 1
-                """, (channel_id, event_type, instance_identifier))
-                sibling_ids = [row[0] for row in self.cursor.fetchall()]
+            def _pending(conn):
+                cursor = conn.cursor()
+                if event_type and instance_identifier:
+                    # Get sibling notification IDs (same event_type, same channel, different instance)
+                    cursor.execute("""
+                        SELECT id FROM bear_notifications
+                        WHERE channel_id = ?
+                          AND event_type = ?
+                          AND instance_identifier != ?
+                          AND is_enabled = 1
+                    """, (channel_id, event_type, instance_identifier))
+                    sibling_ids = [row[0] for row in cursor.fetchall()]
 
-                # Include current notification + siblings
-                all_notification_ids = [notification_id] + sibling_ids
-                placeholders = ','.join('?' * len(all_notification_ids))
+                    # Include current notification + siblings
+                    all_notification_ids = [notification_id] + sibling_ids
+                    placeholders = ','.join('?' * len(all_notification_ids))
 
-                self.cursor.execute(f"""
-                    SELECT id, message_id FROM notification_history
-                    WHERE notification_id IN ({placeholders})
-                      AND scheduled_delete_at IS NULL
-                      AND deleted_at IS NULL
-                      AND message_id IS NOT NULL
-                """, all_notification_ids)
-            else:
-                # For non-multi-instance events
-                self.cursor.execute("""
-                    SELECT id, message_id FROM notification_history
-                    WHERE notification_id = ?
-                      AND scheduled_delete_at IS NULL
-                      AND deleted_at IS NULL
-                      AND message_id IS NOT NULL
-                """, (notification_id,))
+                    cursor.execute(f"""
+                        SELECT id, message_id FROM notification_history
+                        WHERE notification_id IN ({placeholders})
+                          AND scheduled_delete_at IS NULL
+                          AND deleted_at IS NULL
+                          AND message_id IS NOT NULL
+                    """, all_notification_ids)
+                else:
+                    # For non-multi-instance events
+                    cursor.execute("""
+                        SELECT id, message_id FROM notification_history
+                        WHERE notification_id = ?
+                          AND scheduled_delete_at IS NULL
+                          AND deleted_at IS NULL
+                          AND message_id IS NOT NULL
+                    """, (notification_id,))
+                return cursor.fetchall()
 
-            rows = self.cursor.fetchall()
-            for history_id, message_id in rows:
-                try:
-                    msg = await channel.fetch_message(message_id)
-                    await msg.delete()
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    # Message already deleted, no permission, or other error
-                    pass
-                finally:
-                    # Mark as deleted regardless
-                    self.cursor.execute("""
+            rows = await db.run(db.BEARTIME, _pending)
+
+            # Rows to mark deleted, written in one transaction once the Discord calls are
+            # done (as before: one commit after the loop; also on an unexpected error).
+            marked = []
+            try:
+                for history_id, message_id in rows:
+                    try:
+                        msg = await channel.fetch_message(message_id)
+                        await msg.delete()
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        # Message already deleted, no permission, or other error
+                        pass
+                    finally:
+                        # Mark as deleted regardless
+                        marked.append((datetime.now(pytz.UTC).isoformat(), history_id))
+            finally:
+                if marked:
+                    def _mark_deleted(conn):
+                        conn.executemany("""
                         UPDATE notification_history
                         SET deleted_at = ?
                         WHERE id = ?
-                    """, (datetime.now(pytz.UTC).isoformat(), history_id))
-
-            self.conn.commit()
+                    """, marked)
+                    await db.run(db.BEARTIME, _mark_deleted)
         except Exception as e:
             logger.error(f"Error deleting previous notifications: {e}")
             print(f"Error deleting previous notifications: {e}")
 
-    def _notification_weekdays(self, notification_id):
-        self.cursor.execute("SELECT weekday FROM notification_days WHERE notification_id = ?", (notification_id,))
+    @staticmethod
+    def _notification_weekdays(conn, notification_id):
+        """Weekday set for a weekday-repeat notification; runs inside the send path's db.run."""
+        rows = conn.execute("SELECT weekday FROM notification_days WHERE notification_id = ?",
+                            (notification_id,)).fetchall()
         weekdays = set()
-        for row in self.cursor.fetchall():
+        for row in rows:
             weekdays.update(int(p) for p in row[0].split('|') if p)
         return weekdays
 
@@ -1052,6 +1082,7 @@ class NotificationSystem(commands.Cog):
             next_time = datetime.fromisoformat(next_notification)
 
             if next_time < now:
+                weekday_repeat = False
                 if repeat_enabled:
                     if isinstance(repeat_minutes, int) and repeat_minutes > 0:
                         # Handle repeated notifications: Move next_time forward by missed intervals
@@ -1060,8 +1091,8 @@ class NotificationSystem(commands.Cog):
                         next_time = next_time + timedelta(minutes=repeat_minutes * periods_passed)
 
                     elif repeat_minutes == -1:
-                        weekdays = self._notification_weekdays(id)
-                        next_time = next_weekday_time(now, weekdays, hour, minute, tz) or next_time
+                        # Next weekday occurrence: read the days and write in one db.run below.
+                        weekday_repeat = True
 
                 elif repeat_minutes == 0:
                     # Handle non-repeating notifications: Keep time, but set date to today
@@ -1071,12 +1102,19 @@ class NotificationSystem(commands.Cog):
                     if next_time < now:
                         next_time = next_time + timedelta(days=1)
 
-                self.cursor.execute("""
-                    UPDATE bear_notifications 
-                    SET next_notification = ? 
+                def _reschedule(conn, next_time):
+                    if weekday_repeat:
+                        weekdays = self._notification_weekdays(conn, id)
+                        next_time = next_weekday_time(now, weekdays, hour, minute, tz) or next_time
+                    if next_time.isoformat() == next_notification:
+                        return  # cannot advance: rewriting the same value every tick is a no-op
+                    conn.execute("""
+                    UPDATE bear_notifications
+                    SET next_notification = ?
                     WHERE id = ?
                 """, (next_time.isoformat(), id))
-                self.conn.commit()
+
+                await db.run(db.BEARTIME, _reschedule, next_time)
                 return
 
             time_until = next_time - now
@@ -1115,14 +1153,15 @@ class NotificationSystem(commands.Cog):
                     # sent_at is stored as UTC wall time - compare in UTC, not the notification's timezone.
                     thirty_seconds_ago = (datetime.now(pytz.UTC) - timedelta(seconds=30)).strftime('%Y-%m-%d %H:%M:%S')
 
-                    self.cursor.execute("""
-                        SELECT COUNT(*) FROM notification_history 
-                        WHERE notification_id = ? 
-                        AND notification_time = ? 
+                    # Per-tick dedupe read stays on the loop (ruling R7), same pattern and WAL
+                    # rationale as check_notifications. _record_sent commits before its
+                    # db.run returns, so the next tick sees the history row.
+                    count = self.conn.execute("""
+                        SELECT COUNT(*) FROM notification_history
+                        WHERE notification_id = ?
+                        AND notification_time = ?
                         AND sent_at >= ?
-                    """, (id, notify_time, thirty_seconds_ago))
-
-                    count = self.cursor.fetchone()[0]
+                    """, (id, notify_time, thirty_seconds_ago)).fetchone()[0]
                     if count == 0:
                         should_notify = True
                         current_time = notify_time
@@ -1383,30 +1422,6 @@ class NotificationSystem(commands.Cog):
                 # Sends succeeded: clear Forbidden confirmations and refresh the last-known channel name.
                 self.send_forbidden_state.pop(channel_id, None)
                 channel_name = getattr(channel, "name", None)
-                if channel_name:
-                    self.cursor.execute(
-                        "UPDATE bear_notifications SET channel_name = ? "
-                        "WHERE id = ? AND (channel_name IS NULL OR channel_name != ?)",
-                        (channel_name, id, channel_name),
-                    )
-
-                # Calculate when to delete messages
-                scheduled_delete_at = self.calculate_delete_time(
-                    guild_id, event_type, custom_delete_delay_minutes,
-                    notification_times, current_time, now
-                )
-
-                # Store each sent message for deletion
-                for message_id in sent_message_ids:
-                    await self.store_message_for_deletion(
-                        id, current_time, channel_id, message_id, scheduled_delete_at
-                    )
-
-                self.cursor.execute("""
-                    UPDATE bear_notifications 
-                    SET last_notification = ? 
-                    WHERE id = ?
-                """, (now.isoformat(), id))
 
                 # Handle notification disabling for non-repeating notifications
                 should_disable = False
@@ -1414,6 +1429,58 @@ class NotificationSystem(commands.Cog):
                     should_disable = True
                 elif rounded_time == 0 and not repeat_enabled:
                     should_disable = True
+
+                # Every record write below (channel name, history rows, last/next time,
+                # disable) shares one transaction, as it did on the long-lived connection.
+                def _record_sent(conn, next_time):
+                    cursor = conn.cursor()
+                    if channel_name:
+                        cursor.execute(
+                            "UPDATE bear_notifications SET channel_name = ? "
+                            "WHERE id = ? AND (channel_name IS NULL OR channel_name != ?)",
+                            (channel_name, id, channel_name),
+                        )
+
+                    # Calculate when to delete messages
+                    scheduled_delete_at = self.calculate_delete_time(
+                        guild_id, event_type, custom_delete_delay_minutes,
+                        notification_times, current_time, now,
+                        settings_reader=lambda gid: _read_deletion_settings(cursor, gid),
+                    )
+
+                    # Store each sent message for deletion
+                    for message_id in sent_message_ids:
+                        self.store_message_for_deletion(
+                            conn, id, current_time, channel_id, message_id, scheduled_delete_at
+                        )
+
+                    cursor.execute("""
+                    UPDATE bear_notifications
+                    SET last_notification = ?
+                    WHERE id = ?
+                """, (now.isoformat(), id))
+
+                    if should_disable:
+                        cursor.execute("""
+                        UPDATE bear_notifications
+                        SET is_enabled = 0
+                        WHERE id = ?
+                    """, (id,))
+
+                    elif rounded_time == 0 and repeat_enabled:
+                        if isinstance(repeat_minutes, int) and repeat_minutes > 0:
+                            current_next = datetime.fromisoformat(next_notification)
+                            next_time = current_next + timedelta(minutes=repeat_minutes)
+
+                        elif repeat_minutes == -1:
+                            weekdays = self._notification_weekdays(conn, id)
+                            next_time = next_weekday_time(max(now, next_time), weekdays, hour, minute, tz) or next_time
+
+                        cursor.execute("""
+                        UPDATE bear_notifications
+                        SET next_notification = ?
+                        WHERE id = ?
+                    """, (next_time.isoformat(), id))
 
                 if should_disable:
                     # Build informative message
@@ -1429,28 +1496,7 @@ class NotificationSystem(commands.Cog):
 
                     logger.info(f"Notification {id} - {event_display} {time_str} ({desc_preview}) was disabled since it is not set to repeat")
 
-                    self.cursor.execute("""
-                        UPDATE bear_notifications
-                        SET is_enabled = 0
-                        WHERE id = ?
-                    """, (id,))
-
-                elif rounded_time == 0 and repeat_enabled:
-                    if isinstance(repeat_minutes, int) and repeat_minutes > 0:
-                        current_next = datetime.fromisoformat(next_notification)
-                        next_time = current_next + timedelta(minutes=repeat_minutes)
-
-                    elif repeat_minutes == -1:
-                        weekdays = self._notification_weekdays(id)
-                        next_time = next_weekday_time(max(now, next_time), weekdays, hour, minute, tz) or next_time
-
-                    self.cursor.execute("""
-                        UPDATE bear_notifications
-                        SET next_notification = ?
-                        WHERE id = ?
-                    """, (next_time.isoformat(), id))
-
-                self.conn.commit()
+                await db.run(db.BEARTIME, _record_sent, next_time)
 
                 # Notify schedule boards after sending notification
                 schedule_cog = self.bot.get_cog("NotificationSchedule")

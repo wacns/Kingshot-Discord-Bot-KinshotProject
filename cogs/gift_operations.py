@@ -10,6 +10,7 @@ from discord.ext import commands
 import sqlite3
 from discord.ext import tasks
 import asyncio
+import inspect
 import os
 import traceback
 import logging
@@ -145,7 +146,10 @@ class GiftOperations(commands.Cog):
     async def _execute_with_retry(self, operation, *args, max_retries=3, delay=0.1):
         for attempt in range(max_retries):
             try:
-                return operation(*args)
+                result = operation(*args)
+                if inspect.isawaitable(result):  # e.g. db.fetchall(...): retry covers the awaited work
+                    result = await result
+                return result
             except sqlite3.OperationalError as e:
                 if "database is locked" in str(e) and attempt < max_retries - 1:
                     self.logger.warning(f"Database locked, retrying in {delay}s (attempt {attempt + 1}/{max_retries})")
@@ -284,20 +288,27 @@ class GiftOperations(commands.Cog):
             if (message.author.bot and not message.flags.is_crossposted) or not message.guild:
                 return
 
-            self.cursor.execute("SELECT alliance_id FROM giftcode_channel WHERE channel_id = ?", (message.channel.id,))
-            channel_info = self.cursor.fetchone()
-            if not channel_info:
-                return
-
+            # Pure string work first: ordinary chat carries no code candidate and
+            # never needs the channel lookup (a worker hop).
             candidates = gift_redemption._extract_content_codes(message.content)
             candidates.extend(gift_redemption._extract_embed_codes(message))
 
-            seen = set()
+            giftcodes = []
             for candidate in candidates:
                 giftcode = self.clean_gift_code(candidate)
-                if not giftcode or giftcode in seen:
+                if not giftcode or giftcode in giftcodes:
                     continue
-                seen.add(giftcode)
+                giftcodes.append(giftcode)
+            if not giftcodes:
+                return
+
+            channel_info = await db.fetchone(
+                db.GIFTCODE, "SELECT alliance_id FROM giftcode_channel WHERE channel_id = ?",
+                (message.channel.id,))
+            if not channel_info:
+                return
+
+            for giftcode in giftcodes:
                 self.logger.info(f"GiftOps: [on_message] Detected potential code '{giftcode}' in channel {message.channel.id}")
                 await gift_redemption.enqueue_validation(self, giftcode, "channel", message, message.channel)
 

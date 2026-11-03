@@ -1,0 +1,198 @@
+{
+  "python": "<python>",
+  "runs_per_file": 7,
+  "command": "<python> -m pytest <file> -q -p no:cacheprovider",
+  "files": {
+    "tests/test_gift_redeem_accounting.py": {
+      "runs": [
+        0.28,
+        0.38,
+        0.23,
+        0.25,
+        0.29,
+        0.25,
+        0.34
+      ],
+      "min": 0.23,
+      "passed": 9,
+      "failed": 0,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "pass_counts_consistent": true,
+      "summaries": [
+        "9 passed, 1 warning in 0.23s",
+        "9 passed, 1 warning in 0.25s",
+        "9 passed, 1 warning in 0.28s",
+        "9 passed, 1 warning in 0.29s",
+        "9 passed, 1 warning in 0.34s",
+        "9 passed, 1 warning in 0.38s"
+      ]
+    },
+    "tests/test_gift_redeem_resume.py": {
+      "runs": [
+        0.35,
+        0.3,
+        0.25,
+        0.26,
+        0.27,
+        0.25,
+        0.22
+      ],
+      "min": 0.22,
+      "passed": 3,
+      "failed": 0,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "pass_counts_consistent": true,
+      "summaries": [
+        "3 passed, 1 warning in 0.22s",
+        "3 passed, 1 warning in 0.25s",
+        "3 passed, 1 warning in 0.26s",
+        "3 passed, 1 warning in 0.27s",
+        "3 passed, 1 warning in 0.30s",
+        "3 passed, 1 warning in 0.35s"
+      ]
+    },
+    "tests/test_process_queue_reload.py": {
+      "runs": [
+        0.19,
+        0.18,
+        0.18,
+        0.18,
+        0.18,
+        0.18,
+        0.19
+      ],
+      "min": 0.18,
+      "passed": 2,
+      "failed": 0,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "pass_counts_consistent": true,
+      "summaries": [
+        "2 passed, 1 warning in 0.18s",
+        "2 passed, 1 warning in 0.19s"
+      ]
+    },
+    "tests/test_bear_persist_no_deadlock.py": {
+      "runs": [
+        2.26,
+        1.95,
+        1.98,
+        1.83,
+        1.9,
+        2.45,
+        2.1
+      ],
+      "min": 1.83,
+      "passed": 1,
+      "failed": 0,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "pass_counts_consistent": true,
+      "summaries": [
+        "1 passed, 1 warning in 1.83s",
+        "1 passed, 1 warning in 1.90s",
+        "1 passed, 1 warning in 1.95s",
+        "1 passed, 1 warning in 1.98s",
+        "1 passed, 1 warning in 2.10s",
+        "1 passed, 1 warning in 2.26s",
+        "1 passed, 1 warning in 2.45s"
+      ]
+    },
+    "tests/test_minister_booking.py": {
+      "runs": [
+        2.54,
+        2.62,
+        2.5,
+        2.66,
+        2.67,
+        2.46,
+        2.78
+      ],
+      "min": 2.46,
+      "passed": 11,
+      "failed": 0,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "pass_counts_consistent": true,
+      "summaries": [
+        "11 passed, 1 warning in 2.46s",
+        "11 passed, 1 warning in 2.50s",
+        "11 passed, 1 warning in 2.54s",
+        "11 passed, 1 warning in 2.62s",
+        "11 passed, 1 warning in 2.66s",
+        "11 passed, 1 warning in 2.67s",
+        "11 passed, 1 warning in 2.78s"
+      ]
+    },
+    "tests/test_notification_fire_path.py": {
+      "runs": [
+        0.5,
+        0.45,
+        0.54,
+        0.64,
+        0.47,
+        0.46,
+        0.49
+      ],
+      "min": 0.45,
+      "passed": 11,
+      "failed": 0,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "pass_counts_consistent": true,
+      "summaries": [
+        "11 passed, 1 warning in 0.45s",
+        "11 passed, 1 warning in 0.46s",
+        "11 passed, 1 warning in 0.47s",
+        "11 passed, 1 warning in 0.49s",
+        "11 passed, 1 warning in 0.50s",
+        "11 passed, 1 warning in 0.54s",
+        "11 passed, 1 warning in 0.64s"
+      ]
+    }
+  }
+}

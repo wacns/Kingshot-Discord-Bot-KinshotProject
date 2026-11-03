@@ -171,5 +171,31 @@ single-threaded long-lived connections, so this is not a regression.
 **Owner decision:** accept this narrower scope for this release; moving that long-lived-
 connection work off the event loop is the **next stage**.
 
+### Stage 2 outcome (2026-11-03, branch `db-offloop`)
+
+Goal 3 is now met for the listed paths: the notification scheduler
+(`notification_system`, `notification_schedule`), the gift-code validation and periodic
+loops in `gift_redemption`, the `gift_operations` and `bear_track` `on_message`
+listeners, and `process_bear_hunt_data` do their database work through `db.run`
+(worker thread, short-lived connection). `ProcessQueue` bookkeeping moved too, except the `enqueue` loop path. Test-mode
+guards (`LONG_LIVED_TARGETS`, and a check against uncommitted long-lived writes reaching
+`db.run`) keep these paths from sliding back.
+
+**Exception (rulings R5/R7): polling reads stay on the loop.** The `check_notifications`
+due-list read, the per-tick dedupe COUNT in `process_notification`, and the bear
+`on_message` alliancesettings read still run on the loop-thread long-lived connection,
+through a fresh cursor, and are listed in `ALLOWED_LONG_LIVED_READS`. Reason: these read
+WAL files, and WAL readers never wait on locks, so they cannot stall the loop, while a
+worker hop at that frequency would be constant executor load for no benefit.
+
+**Deliberately left on long-lived connections:**
+
+- `gift_settings.get_test_fid`: called by synchronous menu code.
+- `process_queue.enqueue` loop path: synchronous callers on the loop.
+- `_pause_and_notify` and the schedule-board render helpers: each commits immediately,
+  so none holds a lock across an await.
+
+The 30 s lock timeout note below still applies.
+
 Also changed by ruling during implementation: sites that relied on SQLite's implicit 5 s
 lock timeout now use the 30 s default (one value for the whole bot).
