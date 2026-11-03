@@ -221,6 +221,7 @@ BACKGROUND_FUNCTIONS: dict[str, set[str]] = {
     "cogs/alliance_id_channel.py": {"on_ready", "on_message", "check_channels_loop"},
     "cogs/bear_track.py": {"on_message"},
     "cogs/gift_operations.py": {"on_message"},
+    "cogs/gift_settings.py": {"get_validation_fid"},
     "cogs/bot_backup.py": {"automatic_backup_loop"},
     "cogs/bot_startup.py": {"on_ready"},
     "cogs/gift_redemption.py": {"handle_gift_validate_process", "periodic_validation_loop_body"},
@@ -287,6 +288,7 @@ LONG_LIVED_TARGETS: dict[str, set[str]] = {
         "_process_auto_use", "_revalidation_loop", "_dm_global_admins", "cleanup_old_invalid_codes",
     },
     "cogs/gift_operations.py": {"on_message"},
+    "cogs/gift_settings.py": {"get_validation_fid"},
     "cogs/notification_system.py": {
         "check_notifications", "process_notification", "_notification_weekdays",
         "delete_previous_notifications", "get_notification_embed", "store_message_for_deletion",

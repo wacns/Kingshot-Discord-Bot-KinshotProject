@@ -93,12 +93,11 @@ async def get_validation_fid(cog):
         tuple: (fid, source) where source is 'test_fid', 'alliance_member', or 'default'
     """
     try:
-        # First try: Use configured test ID if it's valid
-        test_fid = get_test_fid(cog)
-
-        # Check if test ID is actually configured (not default)
-        cog.settings_cursor.execute("SELECT test_fid FROM test_fid_settings ORDER BY id DESC LIMIT 1")
-        result = cog.settings_cursor.fetchone()
+        # First try: Use configured test ID if it's valid. One read (off the loop)
+        # serves both get_test_fid's lookup and the "configured, not default" check.
+        result = await db.fetchone(
+            db.SETTINGS, "SELECT test_fid FROM test_fid_settings ORDER BY id DESC LIMIT 1")
+        test_fid = result[0] if result else DEFAULT_TEST_FID
 
         if result and result[0] != DEFAULT_TEST_FID:
             # A configured test ID is used as-is; a bad/kid-less one just yields NO_STATE
@@ -107,20 +106,17 @@ async def get_validation_fid(cog):
             return test_fid, 'test_fid'
 
         # Second try: Use a random alliance member
-        with db.connect(db.USERS) as users_conn:
-            users_cursor = users_conn.cursor()
-            users_cursor.execute("""
+        member = await db.fetchone(db.USERS, """
                 SELECT fid, nickname FROM users
                 WHERE alliance IS NOT NULL AND alliance != ''
                 ORDER BY RANDOM()
                 LIMIT 1
             """)
-            member = users_cursor.fetchone()
 
-            if member:
-                fid, nickname = member
-                cog.logger.info(f"Using alliance member ID for validation: {fid} ({nickname})")
-                return fid, 'alliance_member'
+        if member:
+            fid, nickname = member
+            cog.logger.info(f"Using alliance member ID for validation: {fid} ({nickname})")
+            return fid, 'alliance_member'
 
         # Third try: Fall back to default ID
         cog.logger.info(f"No alliance members found, using default ID for validation: {DEFAULT_TEST_FID}")

@@ -23,12 +23,19 @@ def _workdir(tmp_path, monkeypatch):
     # relative to the cwd.
     monkeypatch.chdir(tmp_path)
     (tmp_path / "db").mkdir()
+    yield
+    while _OPEN:
+        _OPEN.pop().close()
+
+
+_OPEN = []
 
 
 def _giftcode_db():
     """giftcode.sqlite with the REAL schema (main.py create_tables
     plus the validation_status ALTER from gift_operations)."""
     mc = sqlite3.connect("db/giftcode.sqlite")
+    _OPEN.append(mc)
     mc.execute("CREATE TABLE gift_codes (giftcode TEXT PRIMARY KEY, date TEXT)")
     mc.execute("ALTER TABLE gift_codes ADD COLUMN validation_status TEXT DEFAULT 'pending'")
     mc.execute("CREATE TABLE user_giftcodes (fid INTEGER, giftcode TEXT, status TEXT)")

@@ -288,21 +288,27 @@ class GiftOperations(commands.Cog):
             if (message.author.bot and not message.flags.is_crossposted) or not message.guild:
                 return
 
+            # Pure string work first: ordinary chat carries no code candidate and
+            # never needs the channel lookup (a worker hop).
+            candidates = gift_redemption._extract_content_codes(message.content)
+            candidates.extend(gift_redemption._extract_embed_codes(message))
+
+            giftcodes = []
+            for candidate in candidates:
+                giftcode = self.clean_gift_code(candidate)
+                if not giftcode or giftcode in giftcodes:
+                    continue
+                giftcodes.append(giftcode)
+            if not giftcodes:
+                return
+
             channel_info = await db.fetchone(
                 db.GIFTCODE, "SELECT alliance_id FROM giftcode_channel WHERE channel_id = ?",
                 (message.channel.id,))
             if not channel_info:
                 return
 
-            candidates = gift_redemption._extract_content_codes(message.content)
-            candidates.extend(gift_redemption._extract_embed_codes(message))
-
-            seen = set()
-            for candidate in candidates:
-                giftcode = self.clean_gift_code(candidate)
-                if not giftcode or giftcode in seen:
-                    continue
-                seen.add(giftcode)
+            for giftcode in giftcodes:
                 self.logger.info(f"GiftOps: [on_message] Detected potential code '{giftcode}' in channel {message.channel.id}")
                 await gift_redemption.enqueue_validation(self, giftcode, "channel", message, message.channel)
 

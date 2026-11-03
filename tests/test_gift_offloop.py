@@ -16,6 +16,7 @@ import pytest
 import cogs.db as db
 import cogs.gift_operations as go
 import cogs.gift_redemption as gr
+import cogs.gift_settings as gs
 
 real_sleep = asyncio.sleep
 
@@ -397,3 +398,75 @@ def test_on_message_reads_the_code_channel_off_loop(workdir, monkeypatch):
 
     assert calls == []
     assert enqueued == [("SUMMERCODE1", 77)]
+
+
+def _spy_db_run(monkeypatch):
+    """Records every db.run dispatch (db.fetch*/execute go through it) and still runs it."""
+    dispatched = []
+    real_run = db.run
+
+    async def spy_run(path, fn, *args):
+        dispatched.append(path)
+        return await real_run(path, fn, *args)
+
+    monkeypatch.setattr(db, "run", spy_run)
+    return dispatched
+
+
+def test_on_message_skips_the_lookup_for_chat_without_codes(workdir, monkeypatch):
+    _gift("INSERT INTO giftcode_channel (alliance_id, channel_id) VALUES (5, 77)")
+    cog, calls, _, _ = _mk_cog()
+    enqueued = []
+
+    async def fake_enqueue(cog_, code, source, msg_, chan):
+        enqueued.append(code)
+
+    monkeypatch.setattr(go.gift_redemption, "enqueue_validation", fake_enqueue)
+    dispatched = _spy_db_run(monkeypatch)
+
+    def msg(channel_id, content):
+        return SimpleNamespace(author=SimpleNamespace(bot=False), flags=SimpleNamespace(is_crossposted=False),
+                               guild=object(), channel=SimpleNamespace(id=channel_id),
+                               content=content, embeds=[])
+
+    asyncio.run(cog.on_message(msg(77, "good morning everyone!")))
+    asyncio.run(cog.on_message(msg(78, "anyone up for rally?")))
+    assert dispatched == [], "chat without a code candidate must not reach the database"
+    assert enqueued == []
+
+    asyncio.run(cog.on_message(msg(77, "new one, Code: SUMMER2026 enjoy")))
+    assert dispatched == [db.GIFTCODE]
+    assert enqueued == ["SUMMER2026"]
+
+    asyncio.run(cog.on_message(msg(78, "WINTER2026")))
+    assert dispatched == [db.GIFTCODE, db.GIFTCODE], "a candidate elsewhere still checks the channel"
+    assert enqueued == ["SUMMER2026"], "...and is ignored outside a code channel"
+    assert calls == []
+
+
+# --- validation ID --------------------------------------------------------------
+
+DEFAULT_FID = gs.DEFAULT_TEST_FID
+
+
+def _settings_and_users(test_fids, members):
+    with sqlite3.connect("db/settings.sqlite") as c:
+        c.execute("CREATE TABLE test_fid_settings (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                  "test_fid TEXT NOT NULL, kid INTEGER)")
+        c.executemany("INSERT INTO test_fid_settings (test_fid) VALUES (?)", [(f,) for f in test_fids])
+    with sqlite3.connect("db/users.sqlite") as c:
+        c.execute("CREATE TABLE users (fid INTEGER, nickname TEXT, alliance TEXT)")
+        c.executemany("INSERT INTO users VALUES (?, ?, ?)", members)
+
+
+@pytest.mark.parametrize("test_fids, members, expected", [
+    (["11111111", "12345678"], [(1, "m", "5")], ("12345678", "test_fid")),
+    ([DEFAULT_FID], [(1, "m", "5"), (2, "x", "")], (1, "alliance_member")),
+    ([], [(1, "m", "5")], (1, "alliance_member")),
+    ([DEFAULT_FID], [(2, "x", None), (3, "y", "")], (DEFAULT_FID, "default")),
+])
+def test_validation_fid_reads_off_loop(workdir, test_fids, members, expected):
+    _settings_and_users(test_fids, members)
+    cog, calls, _, _ = _mk_cog()
+    assert asyncio.run(gs.get_validation_fid(cog)) == expected
+    assert calls == []
