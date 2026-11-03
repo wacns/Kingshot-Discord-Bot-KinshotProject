@@ -19,10 +19,24 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import discord
+import pytest
 import pytz
 
 ns = importlib.import_module("cogs.notification_system")
 event_types = importlib.import_module("cogs.notification_event_types")
+
+_open_conns = []
+
+
+@pytest.fixture(autouse=True)
+def _workdir(tmp_path, monkeypatch):
+    # process_notification reads and writes db/beartime.sqlite through db.run,
+    # relative to the cwd.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "db").mkdir()
+    yield
+    while _open_conns:
+        _open_conns.pop().close()
 
 
 def _forbidden():
@@ -48,7 +62,11 @@ class _Chan:
 
 
 def _mk_cog(channel):
-    conn = sqlite3.connect(":memory:")
+    conn = sqlite3.connect("db/beartime.sqlite")
+    _open_conns.append(conn)
+    # beartime.sqlite runs in WAL in production; no fsync per test-setup commit.
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=OFF")
     conn.execute("""CREATE TABLE notification_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT, notification_id INTEGER,
         notification_time INTEGER, message_id INTEGER, channel_id INTEGER,

@@ -134,14 +134,15 @@ class NotificationSchedule(commands.Cog):
         while not self.bot.is_closed():
             try:
                 # Get all unique timezones from boards
-                self.cursor.execute("""
+                rows = await db.fetchall(db.BEARTIME, """
                     SELECT DISTINCT timezone FROM notification_schedule_boards
                 """)
-                timezones = [row[0] for row in self.cursor.fetchall()]
+                timezones = [row[0] for row in rows]
 
                 # For each timezone, check if it's midnight (00:01)
                 now_utc = datetime.now(pytz.UTC)
 
+                due = []
                 for tz_str in timezones:
                     try:
                         tz = self._get_timezone_object(tz_str)
@@ -149,14 +150,37 @@ class NotificationSchedule(commands.Cog):
 
                         # Check if it's 00:01 in this timezone (1-minute window)
                         if now_in_tz.hour == 0 and now_in_tz.minute == 1:
-                            self.logger.info(f"[SCHEDULE] Daily refresh triggered for timezone: {tz_str}")
+                            due.append(tz_str)
 
-                            # Get all boards in this timezone
-                            self.cursor.execute("""
+                    except Exception as e:
+                        self.logger.error(f"[SCHEDULE] Error refreshing timezone {tz_str}: {e}")
+                        print(f"[ERROR] Error refreshing timezone {tz_str}: {e}")
+                        continue
+
+                if due:
+                    # Get all boards in each due timezone, in one hop. A failed read is kept
+                    # per timezone so it is reported for that timezone only, as before.
+                    def _boards_by_timezone(conn, due):
+                        found = {}
+                        for tz_str in due:
+                            try:
+                                found[tz_str] = [row[0] for row in conn.execute("""
                                 SELECT id FROM notification_schedule_boards
                                 WHERE timezone = ?
-                            """, (tz_str,))
-                            board_ids = [row[0] for row in self.cursor.fetchall()]
+                            """, (tz_str,)).fetchall()]
+                            except Exception as e:
+                                found[tz_str] = e
+                        return found
+
+                    boards_by_timezone = await db.run(db.BEARTIME, _boards_by_timezone, due)
+
+                    for tz_str in due:
+                        try:
+                            self.logger.info(f"[SCHEDULE] Daily refresh triggered for timezone: {tz_str}")
+
+                            board_ids = boards_by_timezone[tz_str]
+                            if isinstance(board_ids, Exception):
+                                raise board_ids
 
                             # Refresh each board
                             for board_id in board_ids:
@@ -164,11 +188,10 @@ class NotificationSchedule(commands.Cog):
 
                             self.logger.info(f"[SCHEDULE] Refreshed {len(board_ids)} board(s) for timezone {tz_str}")
 
-                    except Exception as e:
-                        self.logger.error(f"[SCHEDULE] Error refreshing timezone {tz_str}: {e}")
-                        print(f"[ERROR] Error refreshing timezone {tz_str}: {e}")
-                        self.conn.rollback()
-                        continue
+                        except Exception as e:
+                            self.logger.error(f"[SCHEDULE] Error refreshing timezone {tz_str}: {e}")
+                            print(f"[ERROR] Error refreshing timezone {tz_str}: {e}")
+                            continue
 
                 # Sleep for 60 seconds before next check
                 await asyncio.sleep(60)
@@ -176,7 +199,6 @@ class NotificationSchedule(commands.Cog):
             except Exception as e:
                 self.logger.error(f"[SCHEDULE] Error in daily refresh loop: {e}")
                 print(f"[ERROR] Error in daily refresh loop: {e}")
-                self.conn.rollback()
                 await asyncio.sleep(60)  # Continue even if error occurs
 
     async def urgency_update_loop(self):
@@ -188,26 +210,30 @@ class NotificationSchedule(commands.Cog):
 
         while not self.bot.is_closed():
             try:
-                # Check if bear_notifications table exists (created by notification_system cog)
-                self.cursor.execute("""
+                def _approaching(conn):
+                    # Check if bear_notifications table exists (created by notification_system cog)
+                    if not conn.execute("""
                     SELECT name FROM sqlite_master
                     WHERE type='table' AND name='bear_notifications'
-                """)
-                if not self.cursor.fetchone():
+                """).fetchone():
+                        return None
+
+                    # Get all notifications that are approaching
+                    return conn.execute("""
+                    SELECT id, channel_id, next_notification
+                    FROM bear_notifications
+                    WHERE is_enabled = 1 AND next_notification IS NOT NULL
+                """).fetchall()
+
+                notifications = await db.run(db.BEARTIME, _approaching)
+                if notifications is None:
                     await asyncio.sleep(300)
                     continue
 
                 now_utc = datetime.now(pytz.UTC)
 
-                # Get all notifications that are approaching
-                self.cursor.execute("""
-                    SELECT id, channel_id, next_notification
-                    FROM bear_notifications
-                    WHERE is_enabled = 1 AND next_notification IS NOT NULL
-                """)
-                notifications = self.cursor.fetchall()
-
                 boards_to_update = set()
+                crossing = []  # (notif_id, guild_id, channel_id); board lookup batched below
 
                 for notif_id, channel_id, next_notif_str in notifications:
                     try:
@@ -234,8 +260,20 @@ class NotificationSchedule(commands.Cog):
                                 continue  # Skip if channel not accessible
 
                             guild_id = channel.guild.id
+                            crossing.append((notif_id, guild_id, channel_id))
 
-                            self.cursor.execute("""
+                    except Exception as e:
+                        self.logger.error(f"[SCHEDULE] Error processing notification {notif_id}: {e}")
+                        continue
+
+                if crossing:
+                    # One hop for every crossing notification; a failed lookup is kept per
+                    # notification so it is reported for that notification only, as before.
+                    def _boards_for(conn, crossing):
+                        found = []
+                        for notif_id, guild_id, channel_id in crossing:
+                            try:
+                                found.append((notif_id, conn.execute("""
                                 SELECT DISTINCT nsb.id
                                 FROM notification_schedule_boards nsb
                                 WHERE nsb.guild_id = ?
@@ -243,14 +281,17 @@ class NotificationSchedule(commands.Cog):
                                     (nsb.board_type = 'server')
                                     OR (nsb.board_type = 'channel' AND nsb.target_channel_id = ?)
                                 )
-                            """, (guild_id, channel_id))
+                            """, (guild_id, channel_id)).fetchall()))
+                            except Exception as e:
+                                found.append((notif_id, e))
+                        return found
 
-                            for (board_id,) in self.cursor.fetchall():
-                                boards_to_update.add(board_id)
-
-                    except Exception as e:
-                        self.logger.error(f"[SCHEDULE] Error processing notification {notif_id}: {e}")
-                        continue
+                    for notif_id, board_rows in await db.run(db.BEARTIME, _boards_for, crossing):
+                        if isinstance(board_rows, Exception):
+                            self.logger.error(f"[SCHEDULE] Error processing notification {notif_id}: {board_rows}")
+                            continue
+                        for (board_id,) in board_rows:
+                            boards_to_update.add(board_id)
 
                 # Update all affected boards
                 if boards_to_update:
@@ -264,7 +305,6 @@ class NotificationSchedule(commands.Cog):
             except Exception as e:
                 self.logger.error(f"[SCHEDULE] Error in urgency update loop: {e}")
                 print(f"[ERROR] Error in urgency update loop: {e}")
-                self.conn.rollback()
                 await asyncio.sleep(300)  # Continue even if error occurs
 
     async def create_schedule_board(self, guild_id: int, channel_id: int, board_type: str,
@@ -1025,8 +1065,8 @@ class NotificationSchedule(commands.Cog):
         Updates a schedule board by regenerating and editing the Discord message.
         Returns True if successful, False otherwise.
         """
-        self.cursor.execute("SELECT guild_id FROM notification_schedule_boards WHERE id = ?", (board_id,))
-        row = self.cursor.fetchone()
+        row = await db.fetchone(db.BEARTIME,
+                                "SELECT guild_id FROM notification_schedule_boards WHERE id = ?", (board_id,))
         with use_guild_theme(row[0] if row else None):
             return await self._render_schedule_board(board_id)
 
